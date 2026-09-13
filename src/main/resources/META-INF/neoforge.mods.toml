@@ -7,6 +7,7 @@ license="MIT"
     version="1.0.0"
     displayName="Yes Steve Model x SlashBlade Fix"
     authors="YES-SB"
+    logoFile="icon.png"
     description='''
 客户端兼容修复模组。把 Yes Steve Model 在 1.21.1 上丢掉的「拔刀剑：重锋」表现还回来，
 并对齐 1.20.1 的观感：
