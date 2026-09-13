@@ -459,8 +459,12 @@ src/main/java/dev/yessb/                         (18 个 Java 文件)
 
 src/main/resources/
 ├── META-INF/neoforge.mods.toml
+├── icon.png                                        # 模组图标，由 icon-src/ 生成
 └── yessb.mixins.json / yessb.slashblade.mixins.json /
     yessb.ysm.mixins.json / yessb.tlm.mixins.json    (4 个混入配置)
+
+icon-src/make_icon.ps1                              # 图标生成脚本（纯 GDI+，无外部素材）
+icon/                                               # 生成结果：1024 / 512 / 256 / 128
 ```
 
 ### 给贡献者的两点提示
