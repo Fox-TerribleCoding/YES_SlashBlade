@@ -1,0 +1,13 @@
+# 构建产物
+build/
+*.tmp
+
+# 内部工作文档：仅供开发时记录排查过程，不随仓库发布
+进展与结论.md
+
+# 编辑器 / 系统
+.idea/
+.vscode/
+*.iml
+Thumbs.db
+desktop.ini

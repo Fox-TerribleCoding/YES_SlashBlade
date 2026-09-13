@@ -1,0 +1,129 @@
+# NOTICE —— 第三方归属声明
+
+**YES-SB（YSM × 拔刀剑重锋 兼容修复）**
+
+本文件说明本项目与第三方项目之间的关系。**本项目不包含、不再分发下述任何项目的代码或美术资源**；
+所有第三方内容都只在**运行时**通过其公开 API 访问，或以"复刻其行为语义"的方式重新实现。
+
+---
+
+## 一、本项目自身
+
+| 项 | 内容 |
+|---|---|
+| 名称 | YES-SB（YSM × 拔刀剑重锋 兼容修复） |
+| 协议 | **MIT** —— 完整文本见 [LICENSE](LICENSE) |
+| 版权 | Copyright (c) 2026 YES-SB contributors |
+
+---
+
+## 二、移植的代码：车万女仆（Touhou Little Maid）
+
+本项目的**女仆拔刀剑渲染**部分（`dev.yessb.compat.TlmMaidBridge`，
+以及 `dev.yessb.mixin.tlm` 下的两个混入）**移植了车万女仆的变换逻辑**。
+
+- 来源：`TartaricAcid/TouhouLittleMaid`
+- 文件：`src/main/java/com/github/tartaricacid/touhoulittlemaid/compat/slashblade/SlashBladeRender.java`
+- 移植内容：`renderMaidMainhandSlashBlade` / `renderMaidOffhandSlashBlade` /
+  `renderGeckoMaidBackSlashBlade` 的**完整变换链与出鞘判定**（`translate` / `rotate` / `scale` 的数值
+  与顺序原样照抄，包括 `scale 0.01`、`rotZ(-15)`、"动作后 5 刻内出鞘"等）。
+  本项目不修改这些数值（仅把缩放调整为原值的 90%，作为可配置项）。
+
+**依其协议要求，保留其版权声明如下：**
+
+```
+MIT License
+
+Copyright (c) 2019-2024 tartaric_acid, for the code part
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+> ⚠️ **注意其协议原文中的限定语 `for the code part`：上述 MIT 只覆盖车万女仆的
+> 代码部分，其美术资源（模型、贴图、音效等）不在 MIT 授权范围内。**
+> 本项目**不使用**车万女仆的任何美术资源。
+
+---
+
+## 三、参考的源码：Yes Steve Model 1.20.1
+
+本项目的**动画相关部分**（`dev.yessb.compat.YsmSlashBladeModule`、
+`dev.yessb.compat.SlashBladeBridge#comboAnimationName`）**参考了其 1.20.1 源码的行为语义**。
+
+- 来源：`YesSteveModel/YesSteveModel`，分支 **`dev/1.20`**
+- 协议：**Apache-2.0**
+- 参考的文件：`src/main/java/com/elfmcys/ysm/client/compat/slashblade/`
+  （`SlashBladeAnimation` / `SlashBladeCompat` / `SlashBladeResharped`）
+- 参考的语义：
+  - "是否拔刀剑"的判定条件；
+  - 由拔刀剑连招状态算出动画名的规则（含超时窗口、`combo_a4_ex → combo_a4ex` 的改名、
+    居合斩的空中变体）；
+  - 主动画前缀 `slashblade:` 与其回退行为。
+
+本项目是**参照该语义自行实现**的，未复制其代码文件。
+
+> 说明：上述仓库是 **1.20.1** 的源码。本项目实际注入的目标是 **1.21.1 的发布版构建**，
+> 两者是同一项目下的不同产物。本项目不复制、不内嵌、不再分发该 1.21.1 构建的任何代码或资源；
+> 仅在运行时以 Mixin 补充返回值。
+
+---
+
+## 四、用于了解架构：YesSteveModel-Native
+
+- 来源：`YesSteveModel/YesSteveModel-Native`
+- 协议：**Apache-2.0**
+- 关系：**仅用于阅读**其模块划分与渲染组织方式（例如确认骨骼层级与模型状态的归属），
+  以判断某些方案是否可行。**未使用其任何代码。**
+
+---
+
+## 五、运行时调用的公开 API：拔刀剑：重锋
+
+- 来源：`SlashBlade:Resharped`（`Quarkrus/SlashBlade_Resharped`）
+- 协议：**代码 MIT / 美术资源 All Rights Reserved**
+- 关系：本项目在**运行时调用其公开类**，例如：
+  - `mods.flammpfeil.slashblade.client.renderer.layers.LayerMainBlade`（腰挂刀渲染层）
+  - `mods.flammpfeil.slashblade.client.renderer.util.BladeRenderState`（部件渲染）
+  - `mods.flammpfeil.slashblade.capability.slashblade.BladeStateAccess`（连招状态读取）
+  - `mods.flammpfeil.slashblade.registry.ComboStateRegistry`（连招状态表）
+
+  这些依赖**仅在编译期存在，运行时不打包进本项目的 jar**；
+  且**不引用、不再分发其任何美术资源**。
+
+---
+
+## 六、其它
+
+- **Minecraft / NeoForge / Sponge Mixin**：通过各自的官方公开 API 与标准 Mixin 机制接入，
+  本项目不包含其任何代码。
+- 本项目**不含**上述任何项目的代码或资源文件。
+  上述归属声明是为了**尊重与致谢**，同时也是履行 MIT 的署名义务。
+
+---
+
+## 七、免责与再分发提示
+
+本项目以 MIT 协议授权（仅覆盖本项目自己的代码）。
+
+**若你要基于本项目二次开发并分发，上述各方的权利与义务仍需你自行确认**，
+包括但不限于：车万女仆协议中的 `for the code part` 限定、
+拔刀剑美术资源的 All Rights Reserved，以及 Yes Steve Model 发布版自身的授权条款。
+
+本项目的设计目标是**不与上游产生授权冲突**：不复制、不内嵌、不再分发任何第三方内容，
+只在运行时通过公开 API 互操作。请保持这一原则。
