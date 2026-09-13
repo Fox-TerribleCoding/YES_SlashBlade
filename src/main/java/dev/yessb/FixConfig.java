@@ -40,18 +40,37 @@ public final class FixConfig {
      * <p>拔刀剑默认在第一人称会去画"挂在身体上的整套 MMD 刀 + 鞘"，
      * 于是低头能看见一整把刀悬在腰部 —— 那不是第一人称该有的样子。
      * 打开本项后改为按手持物绘制，只画刀身。
+     *
+     * <p><b>默认值是"允许介入"，但 {@link #firstPersonMode} 默认 {@code auto}</b> ——
+     * 也就是"原版画得出来就别插手，画不出来才兜底"。真正接管第一人称（{@code model}）
+     * 需要显式打开，因为那条路要配一组位移参数才好看，见 {@link #firstPersonMode}。
      */
     public static boolean firstPersonAsHeldItem = true;
 
     /**
      * 第一人称的画法：
      * <ul>
-     *   <li>{@code model} —— 画 3D 刀身（默认；位置/朝向/缩放可用下面的参数微调）</li>
-     *   <li>{@code icon} —— 画平面图标（拔刀剑 GUI/地面图标用的那个部件）</li>
-     *   <li>{@code off} —— 完全不干预，回到拔刀剑原本的"腰挂式"第一人称</li>
+     *   <li>{@code auto} —— <b>默认</b>。先问拔刀剑原生的 {@code BladeFirstPersonRender}
+     *       "这一帧你画不画得出来"（条件逐条照抄它的字节码）；画得出来就放手，
+     *       画不出来（例如 YSM 把玩家渲染器换成了不是 {@code RenderLayerParent} 的东西、
+     *       或玩家在睡觉 / 隐藏了 HUD）才由本模组兜底，避免第一人称彻底没有刀。</li>
+     *   <li>{@code off} —— 完全不干预，永远交回原版。这就是 1.20.1 的样子，
+     *       也就是参照截图里那"一整把刀斜跨画面"。</li>
+     *   <li>{@code model} —— 本模组接管，画 3D 刀身（位置/朝向/缩放用下面的参数微调）。</li>
+     *   <li>{@code icon} —— 本模组接管，画平面图标（拔刀剑 GUI/地面图标用的那个部件）。</li>
      * </ul>
+     *
+     * <p><b>为什么默认不接管。</b>第一人称不经过 YSM 接管的 {@code EntityRenderDispatcher}
+     * —— YSM 从来没有掐过它，1.21.1 上原版那套本来就能画。本模组的职责是
+     * "把被掐掉的还回去"，第一人称不属于这一类；主动接管只会平白引入一组需要调的变换。
+     * （实测：{@code model} 模式下刀会整体偏出画面，根因是漏了一次
+     * {@code translate(0.5,0.5,0.5)}，现已修，见 {@link SlashBladeBridge#renderBladeModel}。）
+     *
+     * <p>另外，两条路画出来的东西<b>本来就不一样</b>：原版那套的刀挂点来自 MMD 模型
+     * （{@code LayerMainBlade}），会跟着身体姿态走；{@code model} 那套是把刀当作
+     * 普通物品画，位置完全由物品的 display 变换决定。
      */
-    public static String firstPersonMode = "model";
+    public static String firstPersonMode = "auto";
 
     /**
      * 手持刀（第三方称主手 / 平面上下文）的缩放。
@@ -497,13 +516,27 @@ public final class FixConfig {
                 #                     调一个不会影响另外两个。
                 #
                 # ==================== 四、第一人称 ====================
-                # firstPersonAsHeldItem  第一人称按"手持物"渲染拔刀剑（像手一样随视角移动），
-                #                        而不是默认那套"挂在身体上的整套刀 + 鞘"。
-                # firstPersonMode        model = 画 3D 刀身（默认）/ icon = 画平面图标 /
-                #                        off = 不干预，回到拔刀剑原本的第一人称行为
-                # firstPersonScale       3D 刀身缩放（同 handBladeScale 的注意事项）
+                # 第一人称不经过 YSM 接管的实体渲染，它从来就没被掐过 —— 1.20.1 的第一人称
+                # 就是拔刀剑自己的 BladeFirstPersonRender（"一整把刀斜跨画面"），
+                # 1.21.1 上本来也是好的。所以默认 auto：原版画得出来就别插手。
+                #
+                # firstPersonMode        auto  = 原版画得出来就放手，画不出来才由本模组兜底（默认）
+                #                        off   = 永远交回原版（= 1.20.1 的样子）
+                #                        model = 本模组接管，把手里的刀按 3D 刀身画出来
+                #                        icon  = 本模组接管，画平面图标
+                # firstPersonAsHeldItem  总闸；false 时一律交回原版（等价于 off）
+                #
+                # ⚠️ 用 model 前先读这段：那条路是把刀当成"普通手持物品"画的，
+                #    位置完全由物品 display 变换决定 —— 而拔刀剑那份 display 变换的位移是
+                #    [-15, 5, -11]（单位 1/16 格），它并不是为这种画法调的。
+                #    所以一定要配 firstPersonOffsetX/Y/Z 收敛：
+                #    开 debugLog 后日志会每 2 秒打一行
+                #      「手持刀[firstPerson]：… 刀原点(相机空间)=(x,y,z) 视野判定=在画面内/★在画面外」
+                #    把它调到"在画面内"为止即可（单位是方块，+X 向右、+Y 向上、-Z 向前）。
+                #
+                # firstPersonScale       3D 刀身缩放（别填 0.003125，那是挂台的尺度）
                 # firstPersonRotX/Y/Z    朝向角度
-                # firstPersonOffsetX/Y/Z 位移（方块）
+                # firstPersonOffsetX/Y/Z 位移（方块，最外层世界位移）
                 #
                 # ==================== 五、车万女仆 ====================
                 # maidSlashBlade     补回女仆手里与背上的那把拔刀剑（默认 true）。
@@ -562,7 +595,7 @@ public final class FixConfig {
 
                 # 四、第一人称
                 firstPersonAsHeldItem=true
-                firstPersonMode=model
+                firstPersonMode=auto
                 firstPersonScale=0.0062
                 firstPersonRotX=0
                 firstPersonRotY=0

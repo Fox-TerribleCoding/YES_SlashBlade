@@ -16,11 +16,14 @@ import mods.flammpfeil.slashblade.init.DefaultResources;
 import mods.flammpfeil.slashblade.item.ItemSlashBlade;
 import mods.flammpfeil.slashblade.registry.ComboStateRegistry;
 import mods.flammpfeil.slashblade.registry.combo.ComboState;
+import net.minecraft.client.CameraType;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.model.EntityModel;
+import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.entity.EntityRenderer;
 import net.minecraft.client.renderer.entity.LivingEntityRenderer;
+import net.minecraft.client.renderer.entity.RenderLayerParent;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.tags.TagKey;
@@ -31,6 +34,7 @@ import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.phys.Vec3;
 import net.neoforged.fml.ModList;
+import org.joml.Matrix4f;
 
 /**
  * 与拔刀剑之间的唯一隔离层。
@@ -356,22 +360,33 @@ public final class SlashBladeBridge {
                                               PoseStack poseStack, MultiBufferSource buffer, int light) {
         if (FixConfig.enabled && FixConfig.firstPersonAsHeldItem && owner instanceof SlashBladeTEISR teisr) {
             try {
-                switch (FixConfig.firstPersonMode) {
-                    case "model" -> {
-                        if (renderBladeModel(stack, poseStack, buffer, light, BladeTransform.firstPerson())) {
-                            return;
-                        }
-                        // 取不到模型（异常刀）时退回图标
-                        teisr.renderIcon(stack, poseStack, buffer, light, FIRST_PERSON_ICON_SCALE);
+                String mode = FixConfig.firstPersonMode;
+                if ("model".equals(mode)) {
+                    if (renderBladeModel(stack, poseStack, buffer, light, BladeTransform.firstPerson())) {
                         return;
                     }
-                    case "icon" -> {
-                        teisr.renderIcon(stack, poseStack, buffer, light, FIRST_PERSON_ICON_SCALE);
+                    // 取不到模型（异常刀）时退回图标
+                    teisr.renderIcon(stack, poseStack, buffer, light, FIRST_PERSON_ICON_SCALE);
+                    return;
+                }
+                if ("icon".equals(mode)) {
+                    teisr.renderIcon(stack, poseStack, buffer, light, FIRST_PERSON_ICON_SCALE);
+                    return;
+                }
+                if ("auto".equals(mode) && !yes_sb$originalWillRender()) {
+                    // 原版画不出来（见下面的前置条件），此时若也放手，第一人称就彻底没有刀了。
+                    // 兜底交给我们自己 —— 至少还能看见一把刀。
+                    diag("第一人称[auto]：原版画不出来，改由本模组兜底画 3D 刀身");
+                    if (renderBladeModel(stack, poseStack, buffer, light, BladeTransform.firstPerson())) {
                         return;
                     }
-                    default -> {
-                        // off：交给下面的原行为
-                    }
+                    teisr.renderIcon(stack, poseStack, buffer, light, FIRST_PERSON_ICON_SCALE);
+                    return;
+                }
+                // off / auto-且原版可用：什么都不做，落到下面的原行为
+                if (!yes_sb$checkOriginalFirstPerson()) {
+                    diag("第一人称：不干预，交回拔刀剑原生的 BladeFirstPersonRender"
+                            + "（那正是 1.20.1 的样子：一整把刀斜跨画面）");
                 }
             } catch (Throwable t) {
                 // 版本差异导致不可用时，安静地退回拔刀剑原本的行为
@@ -382,6 +397,70 @@ public final class SlashBladeBridge {
         }
         if (original instanceof BladeFirstPersonRender firstPersonRender) {
             firstPersonRender.render(poseStack, buffer, light);
+        }
+    }
+
+    /**
+     * 原版 {@code BladeFirstPersonRender} 此刻会不会真的画东西 —— 条件逐条照抄它的字节码。
+     *
+     * <p>原版遇到任何一条不满足就<b>静默 return</b>，日志里看不出原因，表现就是
+     * 「第一人称什么都没有」。所以本模组在 {@code firstPersonMode=auto} 时先问这一句，
+     * 判断为"画不出来"就自己兜底。
+     *
+     * <p>其中 {@code 可建腰挂层} 最关键 —— 原版的腰挂层是靠
+     * {@code new LayerMainBlade(渲染器)} 建的，而 YSM 把玩家的渲染器整个换掉了；
+     * 只要它仍是 {@code LivingEntityRenderer}（⇒ 实现 {@code RenderLayerParent}）这一层就能建起来。
+     *
+     * @return 原版是否会真的画（同时把检查结果写进日志）
+     */
+    private static boolean yes_sb$checkOriginalFirstPerson() {
+        boolean willRender = yes_sb$originalWillRender();
+        if (FixConfig.debugLog) {
+            try {
+                Minecraft mc = Minecraft.getInstance();
+                LocalPlayer player = mc.player;
+                if (player == null) {
+                    diag("第一人称[原版]：mc.player 为 null ⇒ 原版直接返回，画不出刀");
+                } else {
+                    Object renderer = mc.getEntityRenderDispatcher().getRenderer(player);
+                    ItemStack main = player.getMainHandItem();
+                    diag("第一人称[原版]前置条件：相机={} 睡觉={} hideGui={} 常飞={} 主手空={} 渲染器={} 可建腰挂层={} ⇒ {}",
+                            mc.options.getCameraType(), player.isSleeping(), mc.options.hideGui,
+                            mc.gameMode != null && mc.gameMode.isAlwaysFlying(), main.isEmpty(),
+                            renderer == null ? "null" : renderer.getClass().getSimpleName(),
+                            renderer instanceof RenderLayerParent,
+                            willRender ? "原版会画" : "★原版画不出来");
+                }
+            } catch (Throwable t) {
+                diag("第一人称[原版]前置条件检查失败: {}", t.toString());
+            }
+        }
+        return willRender;
+    }
+
+    /** 只做判断、不打日志的那一半（{@code auto} 模式每帧都要问一次）。 */
+    private static boolean yes_sb$originalWillRender() {
+        try {
+            Minecraft mc = Minecraft.getInstance();
+            LocalPlayer player = mc.player;
+            if (player == null || mc.gameMode == null) {
+                return false;
+            }
+            // 原版的 layer 是 new LayerMainBlade(渲染器) 建起来的：
+            // 渲染器只要还实现 RenderLayerParent，这一层就建得起来。
+            if (!(mc.getEntityRenderDispatcher().getRenderer(player) instanceof RenderLayerParent)) {
+                return false;
+            }
+            if (mc.options.getCameraType() != CameraType.FIRST_PERSON
+                    || player.isSleeping()
+                    || mc.options.hideGui
+                    || mc.gameMode.isAlwaysFlying()) {
+                return false;
+            }
+            ItemStack main = player.getMainHandItem();
+            return !main.isEmpty() && BladeStateAccess.of(main).isPresent();
+        } catch (Throwable t) {
+            return false;
         }
     }
 
@@ -432,22 +511,35 @@ public final class SlashBladeBridge {
             return false;
         }
 
-        // 节流输出：这条每帧都会走到，不加节流会把日志刷爆（早前实测能涨到 2MB）
-        diag("手持刀：模型={} 3D={} 图标={} 缩放={} 平面上下文={}",
-                modelLocation, hasBlade, hasIcon, transform.scale(), transform.flatContext());
-
         poseStack.pushPose();
         try {
+            // 位移放在**最外层**，配置值才是真正的「世界位移（方块）」。
+            //
+            // 早前它写在 scale 之后，于是会被上面那次 scale 再乘一遍：填 1.0 实际只挪
+            // 0.0062 格，等于永远调不动 —— 「第一人称怎么调都没反应」有它一份。
+            // 现在填 1.0 = 沿相机 X 轴（右）移动 1 格，与文档里的说法一致。
+            poseStack.translate(transform.offsetX(), transform.offsetY(), transform.offsetZ());
+
+            // ★ 这一步是所有上下文都必须的，不是只有 FIXED 才要。
+            //
+            // ItemRenderer 在把控制权交给 BEWLR 之前，先应用了物品的 display 变换，
+            // 然后**无条件**做了一次 translate(-0.5, -0.5, -0.5)
+            // （见 ItemRenderer#render 的字节码：ItemTransform.apply → ldc -0.5f ×3 → renderByItem）。
+            // 拔刀剑自己的 renderBlade 进非第一人称分支后第一句就是 translate(0.5f, 0.5f, 0.5f)，
+            // 正是把这一步抵消回去 —— 它的波前模型是以「方块中心」为原点定义的。
+            //
+            // 我们早前只给 FIXED 加了这一句，手持/第一人称没加，于是那两处的刀整整偏了
+            // 0.5 个世界单位（还要再被 display 的 1.25 倍缩放与 rotY(180) 放大到约 0.6 格）。
+            // 第一人称那 0.6 格正好把刀推到画面下方之外 —— 「第一人称看不见刀模」就是这么来的。
+            poseStack.translate(0.5F, 0.5F, 0.5F);
             if (transform.flatContext()) {
-                // 复刻 renderBlade 画 FIXED 图标前那两步
-                poseStack.translate(0.5F, 0.5F, 0.5F);
+                // 复刻 renderBlade 画 FIXED 图标前那一步转向
                 poseStack.mulPose(Axis.YP.rotationDegrees(180.0F));
             }
             poseStack.scale(transform.scale(), transform.scale(), transform.scale());
             poseStack.mulPose(Axis.ZP.rotationDegrees(transform.rotZ()));
             poseStack.mulPose(Axis.YP.rotationDegrees(transform.rotY()));
             poseStack.mulPose(Axis.XP.rotationDegrees(transform.rotX()));
-            poseStack.translate(transform.offsetX(), transform.offsetY(), transform.offsetZ());
 
             if (hasBlade) {
                 // 平面上下文里我们是在"顶替一个平面图标"，所以要把 3D 刀身挪到图标原来的位置上：
@@ -473,10 +565,56 @@ public final class SlashBladeBridge {
             } else {
                 renderPart(stack, model, "item_blade", textureLocation, poseStack, buffer, light);
             }
+
+            // 节流输出：这条每帧都会走到，不加节流会把日志刷爆（早前实测能涨到 2MB）。
+            // 顺带把"刀的原点落在相机空间的哪里"报出来 —— 第一人称的调参全靠这三个数：
+            // 它们负得太多（|X| / |Y| 超过深度 × tan(FOV/2) 对应的视野半宽半高）就说明刀在画面外。
+            yes_sb$diagPlacement(transform, modelLocation, hasBlade, hasIcon, poseStack);
         } finally {
             poseStack.popPose();
         }
         return true;
+    }
+
+    /**
+     * 诊断一次"画在哪"（节流 2 秒）。
+     *
+     * <p>报出刀的原点在<b>相机空间</b>的坐标，并按当前 FOV 与窗口宽高比判断它是否落在视野内。
+     * 第一人称的调参全靠这三个数：把 {@code firstPersonOffsetX/Y/Z} 加到「在画面外」变成
+     * 「在画面内」为止即可，不需要反复进游戏猜。
+     */
+    private static void yes_sb$diagPlacement(BladeTransform transform, ResourceLocation modelLocation,
+                                             boolean hasBlade, boolean hasIcon, PoseStack poseStack) {
+        if (!FixConfig.debugLog) {
+            return;
+        }
+        Matrix4f m = poseStack.last().pose();
+        float x = m.m30();
+        float y = m.m31();
+        float z = m.m32();
+        diag("手持刀[{}]：模型={} 3D={} 图标={} 缩放={} 平面={} 刀原点(相机空间)=({}) 视野判定={}",
+                transform.label(), modelLocation, hasBlade, hasIcon, transform.scale(),
+                transform.flatContext(), fmt(x, y, z), yes_sb$visibilityVerdict(x, y, z));
+    }
+
+    /** 相机空间里 -Z 是视线方向；据此判断这个点是否落在视野内。 */
+    private static String yes_sb$visibilityVerdict(float x, float y, float z) {
+        try {
+            Minecraft mc = Minecraft.getInstance();
+            double depth = -z;
+            if (depth <= 0.05D) {
+                return "★在相机后面/贴着镜头";
+            }
+            double fov = mc.options.fov().get();
+            double aspect = (double) mc.getWindow().getWidth() / (double) mc.getWindow().getHeight();
+            double halfHeight = depth * Math.tan(Math.toRadians(fov / 2.0D));
+            double halfWidth = halfHeight * aspect;
+            boolean inside = Math.abs(x) <= halfWidth && Math.abs(y) <= halfHeight;
+            return (inside ? "在画面内" : "★在画面外")
+                    + String.format(java.util.Locale.ROOT, "（视野半宽=%.2f 半高=%.2f）", halfWidth, halfHeight);
+        } catch (Throwable t) {
+            return "无法判断(" + t.getClass().getSimpleName() + ")";
+        }
     }
 
     // ------------------------------------------------------------------ 诊断

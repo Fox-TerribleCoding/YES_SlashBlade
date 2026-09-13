@@ -8,6 +8,7 @@ import dev.yessb.FixConfig;
  * <p>三个上下文（第一人称 / 第三方称主手 / {@code FIXED}）各自独立取参数 ——
  * 早前它们共用同一组 {@code firstPerson*}，导致调好一个必然弄坏另一个。
  *
+ * @param label       诊断用的上下文标签（{@code firstPerson} / {@code hand} / {@code flat}）
  * @param scale       缩放
  * @param rotX        绕 X 轴的角度（俯仰）
  * @param rotY        绕 Y 轴的角度（偏航）
@@ -19,7 +20,8 @@ import dev.yessb.FixConfig;
  *                    那套固定变换，还会做一次几何修正（见
  *                    {@link SlashBladeBridge#renderBladeModel}）
  */
-public record BladeTransform(float scale,
+public record BladeTransform(String label,
+                             float scale,
                              float rotX, float rotY, float rotZ,
                              float offsetX, float offsetY, float offsetZ,
                              boolean flatContext) {
@@ -27,6 +29,7 @@ public record BladeTransform(float scale,
     /** 第一人称用的一组（从配置读）。 */
     public static BladeTransform firstPerson() {
         return new BladeTransform(
+                "firstPerson",
                 (float) FixConfig.firstPersonScale,
                 (float) FixConfig.firstPersonRotX,
                 (float) FixConfig.firstPersonRotY,
@@ -40,6 +43,7 @@ public record BladeTransform(float scale,
     /** 第三方称主手用的一组（从配置读）。 */
     public static BladeTransform hand() {
         return new BladeTransform(
+                "hand",
                 (float) FixConfig.handBladeScale,
                 (float) FixConfig.handBladeRotX,
                 (float) FixConfig.handBladeRotY,
@@ -53,6 +57,7 @@ public record BladeTransform(float scale,
     /** {@code FIXED}（女仆装饰槽、桌面展示等）用的一组（从配置读）。 */
     public static BladeTransform flat() {
         return new BladeTransform(
+                "flat",
                 (float) FixConfig.flatBladeScale,
                 (float) FixConfig.flatBladeRotX,
                 (float) FixConfig.flatBladeRotY,

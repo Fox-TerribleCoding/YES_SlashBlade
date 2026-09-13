@@ -4,7 +4,7 @@ license="MIT"
 
 [[mods]]
     modId="yes_sb"
-    version="1.0.0"
+    version="1.0.1"
     displayName="Yes Steve Model x SlashBlade Fix"
     authors="YES-SB"
     logoFile="icon.png"
@@ -16,6 +16,8 @@ license="MIT"
   2. 拔刀剑剑技动画（YSM 2.6.5 的拔刀剑联动模块是空实现，导致剑技动画无法触发）
   3. 主动画的拔刀剑变体（持刀时的待机 / 走 / 跑 / 跳 / 潜行专属动作）
   4. 车万女仆手里的拔刀剑（TLM 1.21.1 发布版丢失了 compat/slashblade 包）
+
+第一人称不再由本模组接管 —— 它本来就没被 YSM 碰过，交回拔刀剑原生行为（= 1.20.1 的样子）。
 
 不修改任何第三方文件，不包含任何第三方的代码或资源。
 所有注入都是失败即静默的 —— 靶点不存在或版本不匹配时只是功能不生效，不会崩溃。
