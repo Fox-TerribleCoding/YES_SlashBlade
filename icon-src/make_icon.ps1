@@ -8,6 +8,13 @@
 #
 #  Output: ..\icon\yes_sb_icon_{1024,512,256,128}.png
 #  Pure GDI+, no external assets, no network, no third-party artwork.
+#
+#  GDI+ transform semantics used below (verified empirically, they are NOT
+#  obvious):
+#    TranslateTransform(T) then RotateTransform(a)  ->  screen = R(a)*p + T
+#    so "rotate about the origin, then translate" is the natural reading.
+#    Graphics.TransformPoints('Device','World', p) is the FORWARD mapping;
+#    passing ('World','Device') returns the inverse.
 # ============================================================================
 
 Add-Type -AssemblyName System.Drawing
@@ -61,7 +68,118 @@ function Solid([int]$a, [System.Drawing.Color]$c) {
     return (New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb($a, $c.R, $c.G, $c.B)))
 }
 
-# =========================================================== 1. background ===
+# ============================================================== 1. geometry ==
+# The whole sword is built on ONE curved centreline: blade, guard and handle all
+# reference it, so the tsuka continues the blade's sori instead of sitting in a
+# separate vertical frame (which left a ~10 deg kink at the guard).
+#
+#   BladeX(t) = 2(1-t)t*BOW      bowed LEFT -> mune is the convex side
+#   BladeY(t) = Y0 - (Y0-Y1)*t   linear, because the control point sits at the
+#                                Y midpoint and cancels the quadratic term.
+$BL_Y0  = -34.0     # blade root (just above the habaki)
+$BL_Y1  = -600.0    # blade tip          -> blade length 566
+$BL_HW  = 23.0      # blade half width   -> long:wide ~ 12:1
+$BL_BOW = -52.0     # centreline control offset -> sori
+$KIS    = 0.86      # t at which the kissaki begins
+
+# Feature positions, given as Y along the centreline.
+$Y_HANDLE_TOP = 24.0     # top of the tsuka (under the tsuba)
+$Y_HANDLE_END = 229.0    # bottom of the tsuka          -> tsuka chord ~213
+$Y_KASHIRA    = 255.0    # centre of the pommel
+$Y_TSUBA      = 16.8     # centre of the guard
+$Y_HABAKI     = -18.6    # centre of the collar
+$RING_R       = 160.0    # radius of the "restore" ring
+
+function BladeX([double]$t) { return 2.0 * (1.0 - $t) * $t * $BL_BOW }
+function BladeY([double]$t) { return $BL_Y0 + ($BL_Y0 - $BL_Y1) * $t * -1.0 }
+function BladeDX([double]$t) { return 2.0 * $BL_BOW * (1.0 - 2.0 * $t) }
+function BladeDY([double]$t) { return ($BL_Y1 - $BL_Y0) }
+function BladeAngle([double]$t) {
+    return [math]::Atan2((BladeDX $t), -(BladeDY $t)) * 180.0 / [math]::PI
+}
+function BladeT([double]$y) { return ($BL_Y0 - $y) / ($BL_Y0 - $BL_Y1) }
+# $sign -1 = mune (back), +1 = ha (edge). The exponent decides how early that
+# side converges, which is what makes the kissaki asymmetric.
+function BladeOff([double]$t, [double]$sign) {
+    if ($t -le $KIS) { return $sign * $BL_HW }
+    $s = ($t - $KIS) / (1.0 - $KIS)
+    $e = 0.6
+    if ($sign -gt 0) { $e = 1.8 }
+    return $sign * $BL_HW * (1.0 - [math]::Pow($s, $e))
+}
+
+$tH0 = BladeT $Y_HANDLE_TOP
+$tH1 = BladeT $Y_HANDLE_END
+$tK  = BladeT $Y_KASHIRA
+$tTsu = BladeT $Y_TSUBA
+$tHab = BladeT $Y_HABAKI
+$hMid = ($tH0 + $tH1) / 2.0
+
+# Half length along the blade axis: the CHORD between the two ends, not the Y
+# difference. The centreline is curved, so the Y span is shorter than the chord
+# and using it leaves the handle visibly short of the kashira.
+$hHalf = 0.5 * [math]::Sqrt([math]::Pow((BladeY $tH1) - (BladeY $tH0), 2.0) + [math]::Pow((BladeX $tH1) - (BladeX $tH0), 2.0))
+$bladeLen  = $BL_Y0 - $BL_Y1
+$handleLen = $hHalf * 2.0
+
+# ========================================================== 2. auto framing ==
+# Collect the extremes of everything about to be drawn, rotate them by the fixed
+# 45 deg, and derive the scale AND the centring offset from that bounding box.
+# Hand-computing these offsets silently went stale every time a dimension
+# changed, so they are derived now.
+$rotDeg = 45.0
+$rotRad = $rotDeg * [math]::PI / 180.0
+$rc = [math]::Cos($rotRad)
+$rs = [math]::Sin($rotRad)
+
+$ext = New-Object 'System.Collections.Generic.List[System.Drawing.PointF]'
+function AddExt([double]$x, [double]$y) {
+    $ext.Add((New-Object System.Drawing.PointF([float]($rc * $x - $rs * $y), [float]($rs * $x + $rc * $y))))
+}
+
+$NS = 60
+for ($i = 0; $i -le $NS; $i++) {
+    $t = $i / $NS
+    AddExt ((BladeX $t) - $BL_HW) (BladeY $t)
+    AddExt ((BladeX $t) + $BL_HW) (BladeY $t)
+}
+foreach ($pair in @(@($tH0, 26.0), @($tH1, 23.0))) {
+    AddExt ((BladeX $pair[0]) - $pair[1]) (BladeY $pair[0])
+    AddExt ((BladeX $pair[0]) + $pair[1]) (BladeY $pair[0])
+}
+AddExt ((BladeX $tK) - 32.0) ((BladeY $tK) - 32.0); AddExt ((BladeX $tK) + 32.0) ((BladeY $tK) + 32.0)
+AddExt ((BladeX $tTsu) - 70.0) ((BladeY $tTsu) - 26.0); AddExt ((BladeX $tTsu) + 70.0) ((BladeY $tTsu) + 26.0)
+AddExt ((BladeX $tHab) - 34.0) ((BladeY $tHab) - 26.0); AddExt ((BladeX $tHab) + 34.0) ((BladeY $tHab) + 26.0)
+$ringCx = BladeX $tTsu
+$ringCy = BladeY $tTsu
+AddExt ($ringCx - $RING_R) ($ringCy - $RING_R); AddExt ($ringCx + $RING_R) ($ringCy + $RING_R)
+
+$bx0 = 1e9; $by0 = 1e9; $bx1 = -1e9; $by1 = -1e9
+foreach ($q in $ext) {
+    if ($q.X -lt $bx0) { $bx0 = $q.X }
+    if ($q.X -gt $bx1) { $bx1 = $q.X }
+    if ($q.Y -lt $by0) { $by0 = $q.Y }
+    if ($q.Y -gt $by1) { $by1 = $q.Y }
+}
+$bw = $bx1 - $bx0
+$bh = $by1 - $by0
+$FILL = 0.84
+$sc  = [math]::Min(($S * $FILL) / $bw, ($S * $FILL) / $bh)
+$bcx = ($bx0 + $bx1) / 2.0
+$bcy = ($by0 + $by1) / 2.0
+
+# screen = sc * R45(p) + T  (Translate, then Rotate, then Scale)
+$g.TranslateTransform([float]($S / 2.0 - $sc * $bcx), [float]($S / 2.0 - $sc * $bcy))
+$g.RotateTransform([float]$rotDeg)
+$g.ScaleTransform([float]$sc, [float]$sc)
+
+Write-Host ("geometry: blade {0:N0} / handle {1:N0}  ratio {2:N2}:1  scale {3:N3}" -f $bladeLen, $handleLen, ($bladeLen / $handleLen), $sc)
+
+# =========================================================== 3. background ===
+# Drawn with the transform reset, so background art is independent of framing.
+$bgState = $g.Save()
+$g.ResetTransform()
+
 $bgPath  = RRect 0 0 $S $S 200
 $bgBrush = VGrad (New-Object System.Drawing.Rectangle(0, 0, $S, $S)) $cBgA $cBgB $cBgC ([float]55)
 $g.FillPath($bgBrush, $bgPath)
@@ -92,75 +210,21 @@ $gridPen.Dispose()
 $rimPen = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(30, 160, 210, 255), [float]3)
 $g.DrawPath($rimPen, (RRect 6 6 ($S - 12) ($S - 12) 196))
 $rimPen.Dispose()
+$g.Restore($bgState)
 
-# ====================================================== 2. katana (local) ====
-# Local space: blade points UP (-Y), handle DOWN (+Y).
-#   y = -480  blade tip          y =  -34  blade root
-#   y =  +24  tsuba              y = +338  kashira (pommel)
-# rotate 45 deg clockwise -> blade points up-right.
-# offset compensates for the shape centre, which is NOT local (0,0): the whole
-# sword is built on a curved centreline, so it sweeps right at the handle end.
-$g.TranslateTransform([float]430.9, [float]579.2)
-$g.RotateTransform([float]45)
-
-# ---- restore ring ----------------------------------------------------------
-# Open cyan ring around the guard: reads as "put back / repair".
-# Drawn behind the katana; the gap is aligned with the handle so the handle
-# passes out through it instead of crossing the arc.
-$cRing = 9.8; $cRingY = 16.8; $rRing = 160.0
+# ======================================================== 4. restore ring ====
+# Open cyan ring around the guard: reads as "put back / repair". The gap is
+# aligned with the handle so the handle exits through it.
 $ringPen = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(140, 92, 236, 226), [float]14)
 $ringPen.StartCap = [System.Drawing.Drawing2D.LineCap]::Round
 $ringPen.EndCap   = [System.Drawing.Drawing2D.LineCap]::Round
-$g.DrawArc($ringPen, [float]($cRing - $rRing), [float]($cRingY - $rRing), [float]($rRing * 2), [float]($rRing * 2), [float]104, [float]316)
+$g.DrawArc($ringPen, [float]($ringCx - $RING_R), [float]($ringCy - $RING_R), [float]($RING_R * 2), [float]($RING_R * 2), [float]104, [float]316)
 $ringPen.Dispose()
 
-# ---- blade silhouette ------------------------------------------------------
-# Katana profile, generated by walking a curved centreline so the two sides stay
-# a fixed distance apart (hand-placed beziers previously bulged into a leaf).
-#
-#   sori   : the centreline is a quadratic bezier bowed LEFT. The mune (back) is
-#            therefore the convex side and the ha (edge) the concave one, which
-#            is the correct katana geometry for "tip up, edge right".
-#   width  : constant half-width, so the blade stays slender (long:wide ~ 11:1).
-#            A dagger look comes from a stubby blade far more than from the tip.
-#   kissaki: the mune starts converging at $KIS while the ha stays wide and only
-#            then collapses, so the point ends up biased toward the back.
-$BL_Y0  = -34.0     # blade root (just above the habaki)
-$BL_Y1  = -530.0    # blade tip
-$BL_HW  = 23.0      # half width
-$BL_BOW = -46.0     # centreline control offset -> sori
-$KIS    = 0.86      # t at which the kissaki begins
-
-function BladeX([double]$t) {
-    $mt = 1.0 - $t
-    return 2.0 * $mt * $t * $BL_BOW
-}
-function BladeY([double]$t) {
-    $mt = 1.0 - $t
-    $ym = ($BL_Y0 + $BL_Y1) / 2.0
-    return $mt * $mt * $BL_Y0 + 2.0 * $mt * $t * $ym + $t * $t * $BL_Y1
-}
-# dX/dt and dY/dt of the centreline. dY/dt is constant because the control point
-# sits exactly at the midpoint of Y0..Y1, which cancels the quadratic term.
-function BladeDX([double]$t) { return 2.0 * $BL_BOW * (1.0 - 2.0 * $t) }
-function BladeDY([double]$t) { return ($BL_Y1 - $BL_Y0) }
-# Angle of the blade axis away from straight-up, in degrees, clockwise positive
-# (GDI+ convention). Used to tilt the guard / collar / handle blocks so they stay
-# square to the blade instead of sitting in a fixed vertical frame.
-function BladeAngle([double]$t) {
-    return [math]::Atan2((BladeDX $t), -(BladeDY $t)) * 180.0 / [math]::PI
-}
-# t for a given y along the centreline (the relation is linear, see BladeDY)
-function BladeT([double]$y) { return ($BL_Y0 - $y) / ($BL_Y1 - $BL_Y0) }
-# $sign -1 = mune, +1 = ha. Exponent chooses how early that side converges.
-function BladeOff([double]$t, [double]$sign) {
-    if ($t -le $KIS) { return $sign * $BL_HW }
-    $s = ($t - $KIS) / (1.0 - $KIS)
-    $e = 0.6
-    if ($sign -gt 0) { $e = 1.8 }
-    return $sign * $BL_HW * (1.0 - [math]::Pow($s, $e))
-}
-
+# ============================================================ 5. blade =======
+# Generated by walking the centreline with a fixed perpendicular offset, so the
+# two sides stay parallel. Hand-placed beziers previously pushed the mune and
+# the ha the WRONG WAY apart and bulged the blade into a leaf shape.
 $NP = 120
 $bladePts = New-Object 'System.Collections.Generic.List[System.Drawing.PointF]'
 for ($i = 0; $i -le $NP; $i++) {
@@ -195,7 +259,7 @@ $p1.Dispose(); $p2.Dispose(); $m1.Dispose(); $m2.Dispose()
 
 # mid stop pulled left on purpose: the darker half only covers the mune side, so
 # the blade reads as single-edged instead of as a symmetrical double-edged one
-$bladeBrush = VGrad (New-Object System.Drawing.Rectangle(-45, -530, 72, 496)) $cSteelLo $cSteelMd $cSteelHi ([float]0) ([float]0.30)
+$bladeBrush = VGrad (New-Object System.Drawing.Rectangle(-45, -600, 72, 566)) $cSteelLo $cSteelMd $cSteelHi ([float]0) ([float]0.30)
 $g.FillPath($bladeBrush, $blade)
 
 # helper: an offset line running along the blade, used for shinogi and hamon
@@ -212,7 +276,7 @@ function BladeLine([double]$off, [double]$t0, [double]$t1, [int]$n) {
 
 # shinogi ridge: the flat-to-ridge line, close to the mune
 $ridgePen = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(55, 40, 58, 84), [float]4)
-$ridge = BladeLine -9.0 0.0 0.95 40
+$ridge = BladeLine -9.0 0.0 0.95 50
 $g.DrawPath($ridgePen, $ridge)
 $ridge.Dispose(); $ridgePen.Dispose()
 
@@ -220,7 +284,7 @@ $ridge.Dispose(); $ridgePen.Dispose()
 $hamonPen = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(220, 255, 255, 255), [float]7)
 $hamonPen.StartCap = [System.Drawing.Drawing2D.LineCap]::Round
 $hamonPen.EndCap   = [System.Drawing.Drawing2D.LineCap]::Round
-$hamon = BladeLine 14.0 0.0 0.93 40
+$hamon = BladeLine 14.0 0.0 0.93 50
 $g.DrawPath($hamonPen, $hamon)
 $hamon.Dispose(); $hamonPen.Dispose()
 
@@ -229,16 +293,7 @@ $outlinePen = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(130
 $g.DrawPath($outlinePen, $blade)
 $outlinePen.Dispose()
 
-# ---- tsuka (handle) --------------------------------------------------------
-# The tsuka must CONTINUE the blade's curve, not sit in a vertical frame: the
-# nakago inside it follows the same arc. A straight vertical handle leaves a
-# ~10 deg kink at the guard, which is what made the earlier versions look wrong.
-# Built as a band along the same centreline, extended to t < 0.
-$tH0 = -0.117     # handle top   (y =  24)
-$tH1 = -0.660     # handle end   (y = 293)
-$hMid = ($tH0 + $tH1) / 2.0
-$hHalf = ((BladeY $tH0) - (BladeY $tH1)) / 2.0      # half length, along local Y
-
+# =========================================================== 6. tsuka ========
 $hState = $g.Save()
 $g.TranslateTransform([float](BladeX $hMid), [float](BladeY $hMid))
 $g.RotateTransform([float](BladeAngle $hMid))
@@ -249,18 +304,18 @@ $handle.AddLine([float]26,  [float](-$hHalf), [float]23,  [float]$hHalf)
 $handle.AddLine([float]23,  [float]$hHalf,    [float]-23, [float]$hHalf)
 $handle.AddLine([float]-23, [float]$hHalf,    [float]-26, [float](-$hHalf))
 $handle.CloseFigure()
-$g.FillPath((VGrad (New-Object System.Drawing.Rectangle(-26, [int](-$hHalf), 52, [int]($hHalf * 2))) $cDark2 $cDark $cDark2 ([float]0)), $handle)
+$g.FillPath((VGrad (New-Object System.Drawing.Rectangle(-26, [int](-$hHalf), 52, [int]($hHalf * 2.0))) $cDark2 $cDark $cDark2 ([float]0)), $handle)
 
 # tsuka-ito: alternating wrap diamonds
 $wrapPen = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(170, 118, 150, 205), [float]5)
-$dTop = -$hHalf + 28
+$dTop = -$hHalf + 26
 $dBot = $hHalf - 16
-for ($yy = $dTop; $yy -le $dBot; $yy += 38) {
+for ($yy = $dTop; $yy -le $dBot; $yy += 34) {
     $dm = New-Object System.Drawing.Drawing2D.GraphicsPath
-    $dm.AddLine([float]-26, [float]$yy,          [float]0,  [float]($yy + 19))
-    $dm.AddLine([float]0,   [float]($yy + 19),   [float]26, [float]$yy)
-    $dm.AddLine([float]26,  [float]$yy,          [float]0,  [float]($yy - 19))
-    $dm.AddLine([float]0,   [float]($yy - 19),   [float]-26, [float]$yy)
+    $dm.AddLine([float]-26, [float]$yy,          [float]0,  [float]($yy + 17))
+    $dm.AddLine([float]0,   [float]($yy + 17),   [float]26, [float]$yy)
+    $dm.AddLine([float]26,  [float]$yy,          [float]0,  [float]($yy - 17))
+    $dm.AddLine([float]0,   [float]($yy - 17),   [float]-26, [float]$yy)
     $dm.CloseFigure()
     $g.DrawPath($wrapPen, $dm)
     $dm.Dispose()
@@ -268,23 +323,26 @@ for ($yy = $dTop; $yy -le $dBot; $yy += 38) {
 $wrapPen.Dispose()
 $g.DrawPath((New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(140, 10, 14, 24), [float]4)), $handle)
 $handle.Dispose()
-
-# ---- kashira (pommel) ------------------------------------------------------
-$tK = -0.680
-$kashiraL = RRect -26 -17 52 34 11
-$g.RotateTransform([float]((BladeAngle $tK) - (BladeAngle $hMid)))
-$g.TranslateTransform([float]((BladeX $tK) - (BladeX $hMid)), [float]((BladeY $tK) - (BladeY $hMid)))
-$g.FillPath((VGrad (New-Object System.Drawing.Rectangle(-26, -17, 52, 34)) $cGoldLo $cGoldHi $cGoldLo ([float]0)), $kashiraL)
-$g.DrawPath((New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(150, 60, 40, 8), [float]3)), $kashiraL)
-$kashiraL.Dispose()
 $g.Restore($hState)
 
+# ---- kashira (pommel) ------------------------------------------------------
+# NOTE: must be its own save/restore frame. Nesting a second RotateTransform
+# inside the handle frame prepends it, so the extra rotation happens about the
+# local origin instead of about the handle position and flings the pommel
+# sideways -- exactly the detached-pommel bug this replaced.
+$kState = $g.Save()
+$g.TranslateTransform([float](BladeX $tK), [float](BladeY $tK))
+$g.RotateTransform([float](BladeAngle $tK))
+$kashira = RRect -26 -17 52 34 11
+$g.FillPath((VGrad (New-Object System.Drawing.Rectangle(-26, -17, 52, 34)) $cGoldLo $cGoldHi $cGoldLo ([float]0)), $kashira)
+$g.DrawPath((New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(150, 60, 40, 8), [float]3)), $kashira)
+$kashira.Dispose()
+$g.Restore($kState)
+
 # ---- guard blocks, squared to the blade axis -------------------------------
-# Drawn last so the guard covers the joint between blade root and handle.
 # local (0,0) is placed on the centreline and the frame is rotated by the local
 # tangent, so these stay perpendicular to the blade as the blade curves.
 $guardState = $g.Save()
-$tTsu = -0.1025                                     # tsuba centre (y = 16.8)
 $g.TranslateTransform([float](BladeX $tTsu), [float](BladeY $tTsu))
 $g.RotateTransform([float](BladeAngle $tTsu))
 $tsuba = RRect -66 -14 132 28 12
@@ -294,7 +352,6 @@ $tsuba.Dispose()
 $g.Restore($guardState)
 
 $habState = $g.Save()
-$tHab = -0.031                                      # habaki centre (y = -18.6)
 $g.TranslateTransform([float](BladeX $tHab), [float](BladeY $tHab))
 $g.RotateTransform([float](BladeAngle $tHab))
 $habaki = RRect -30 -19 60 38 8
@@ -305,7 +362,10 @@ $g.Restore($habState)
 
 $blade.Dispose()
 
-# ============================================================ 3. sparkles ===
+# ========================================================== 7. sparkles ======
+# Screen space, but placed relative to the auto-derived bounding box so they
+# follow the artwork when the framing changes.
+$spState = $g.Save()
 $g.ResetTransform()
 
 function Star([float]$cx, [float]$cy, [float]$r, [System.Drawing.Color]$col) {
@@ -325,11 +385,20 @@ function Star([float]$cx, [float]$cy, [float]$r, [System.Drawing.Color]$col) {
     $p.Dispose()
 }
 
-Star 296 258 46 ([System.Drawing.Color]::FromArgb(240, 255, 255, 255))
-Star 214 348 19 ([System.Drawing.Color]::FromArgb(170, 186, 246, 255))
-Star 700 728 21 ([System.Drawing.Color]::FromArgb(150, 186, 246, 255))
+$sx0 = [float]($S / 2.0 - $sc * $bw / 2.0)
+$sx1 = [float]($S / 2.0 + $sc * $bw / 2.0)
+$sy0 = [float]($S / 2.0 - $sc * $bh / 2.0)
+$sy1 = [float]($S / 2.0 + $sc * $bh / 2.0)
+$sxw = $sx1 - $sx0
+$syh = $sy1 - $sy0
 
-# =============================================================== 4. output ===
+Star ($sx0 + 0.19 * $sxw) ($sy0 + 0.17 * $syh) 46 ([System.Drawing.Color]::FromArgb(240, 255, 255, 255))
+Star ($sx0 + 0.10 * $sxw) ($sy0 + 0.31 * $syh) 19 ([System.Drawing.Color]::FromArgb(170, 186, 246, 255))
+Star ($sx0 + 0.86 * $sxw) ($sy0 + 0.87 * $syh) 21 ([System.Drawing.Color]::FromArgb(150, 186, 246, 255))
+
+$g.Restore($spState)
+
+# ============================================================= 8. output =====
 $targets = @(
     @{ size = 1024; name = 'yes_sb_icon_1024.png' },
     @{ size = 512;  name = 'yes_sb_icon_512.png'  },
