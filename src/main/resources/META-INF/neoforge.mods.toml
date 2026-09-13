@@ -1,0 +1,73 @@
+modLoader="javafml"
+loaderVersion="[4,)"
+license="MIT"
+
+[[mods]]
+    modId="yes_sb"
+    version="1.0.0"
+    displayName="Yes Steve Model x SlashBlade Fix"
+    authors="YES-SB"
+    description='''
+客户端兼容修复模组。把 Yes Steve Model 在 1.21.1 上丢掉的「拔刀剑：重锋」表现还回来，
+并对齐 1.20.1 的观感：
+
+  1. 第三人称的腰挂刀与连招出鞘（YSM 跳过了原版渲染器，连带掐掉了拔刀剑的腰刀层）
+  2. 拔刀剑剑技动画（YSM 2.6.5 的拔刀剑联动模块是空实现，导致剑技动画无法触发）
+  3. 主动画的拔刀剑变体（持刀时的待机 / 走 / 跑 / 跳 / 潜行专属动作）
+  4. 车万女仆手里的拔刀剑（TLM 1.21.1 发布版丢失了 compat/slashblade 包）
+
+不修改任何第三方文件，不包含任何第三方的代码或资源。
+所有注入都是失败即静默的 —— 靶点不存在或版本不匹配时只是功能不生效，不会崩溃。
+详见 README。
+'''
+
+[[mixins]]
+    config="yessb.mixins.json"
+
+[[mixins]]
+    config="yessb.slashblade.mixins.json"
+
+[[mixins]]
+    config="yessb.ysm.mixins.json"
+
+[[mixins]]
+    config="yessb.tlm.mixins.json"
+
+[[dependencies.yes_sb]]
+    modId="neoforge"
+    type="required"
+    versionRange="[21.1,21.2)"
+    ordering="NONE"
+    side="BOTH"
+
+[[dependencies.yes_sb]]
+    modId="minecraft"
+    type="required"
+    versionRange="[1.21.1,1.21.2)"
+    ordering="NONE"
+    side="BOTH"
+
+# 拔刀剑：渲染还原依赖它公开的 LayerMainBlade；缺失时本模组保持惰性。
+[[dependencies.yes_sb]]
+    modId="slashblade"
+    type="optional"
+    versionRange="[2.0,3.0)"
+    ordering="NONE"
+    side="CLIENT"
+
+# YSM：本模组只在它存在、且其原生渲染确实掐掉原版渲染层时才有意义。
+[[dependencies.yes_sb]]
+    modId="yes_steve_model"
+    type="optional"
+    versionRange="[2.0,)"
+    ordering="NONE"
+    side="CLIENT"
+
+# 车万女仆：1.21.1 的发布版移植丢了 GeckoLayerMaidHeld 里的拔刀剑分支（见 TlmMaidBridge 注释），
+# 本模组把它补回去；没装 TLM 时该组混入不注入，本模组保持惰性。
+[[dependencies.yes_sb]]
+    modId="touhou_little_maid"
+    type="optional"
+    versionRange="[1.5,)"
+    ordering="NONE"
+    side="CLIENT"

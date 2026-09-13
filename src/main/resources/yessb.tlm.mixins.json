@@ -1,0 +1,14 @@
+{
+  "required": false,
+  "minVersion": "0.8",
+  "package": "dev.yessb.mixin.tlm",
+  "plugin": "dev.yessb.mixin.plugin.TlmMixinPlugin",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "MixinTlmMaidHeldLayer",
+    "MixinTlmMaidBackItemLayer"
+  ],
+  "injectors": {
+    "defaultRequire": 0
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "required": false,
+  "minVersion": "0.8",
+  "package": "dev.yessb.mixin.sb",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "MixinSlashBladeTEISR"
+  ],
+  "injectors": {
+    "defaultRequire": 0
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "required": false,
+  "minVersion": "0.8",
+  "package": "dev.yessb.mixin.ysm",
+  "plugin": "dev.yessb.mixin.plugin.YsmMixinPlugin",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "MixinYsmSlashBladeModule",
+    "MixinYsmHeldItemClassifier"
+  ],
+  "injectors": {
+    "defaultRequire": 0
+  }
+}
