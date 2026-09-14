@@ -43,7 +43,7 @@ $BuildDir   = Join-Path $ProjectRoot 'build'
 $ClassesDir = Join-Path $BuildDir 'classes'
 $SrcDir     = Join-Path $ProjectRoot 'src\main\java'
 $ResDir     = Join-Path $ProjectRoot 'src\main\resources'
-$JarName    = 'YES_SB-1.0.1.jar'
+$JarName    = 'YES_SB-1.0.4.jar'
 $OutJar     = Join-Path $BuildDir $JarName
 
 if ($Clean -and (Test-Path -LiteralPath $BuildDir)) {
