@@ -141,7 +141,12 @@ The full Chinese configuration reference — every key, one row each — is in
 | YSM | `ysm-2.6.5-neoforge+mc1.21.1-release.jar` | 63,463,229 B | `B285C73D4EC010D9` |
 | SlashBlade: Resharped | `SlashBladeResharped-2.0.7-1.21.1.jar` | 3,886,797 B | `C67653EC0D7E08A7` |
 | Touhou Little Maid | `touhoulittlemaid-1.5.3-neoforge+mc1.21.1.jar` | 24,408,776 B | `F6DB04195820C850` |
-| This mod | `YES_SB-1.0.1.jar` | 130,068 B | `56232F6BCD04CE32` |
+| This mod | `YES_SB-1.0.1.jar` | 130,068 B | `59AD28A612345BE1` |
+
+> This mod's jar entries carry **build timestamps**, so its hash changes on every rebuild
+> even with identical sources — it identifies one specific build, not a constant.
+> The three third-party jars above are the stable reference. When reporting an issue,
+> please include this table; it rules out version mismatches immediately.
 
 NeoForge 21.1.x / Minecraft 1.21.1.
 Verification method: the mod's own compiled classes were disassembled and every third-party
