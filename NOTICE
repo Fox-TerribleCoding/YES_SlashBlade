@@ -61,26 +61,37 @@ SOFTWARE.
 
 ---
 
-## 三、参考的源码：Yes Steve Model 1.20.1
+## 三、参考的源码：Yes Steve Model（公开源码仓库）
 
 本项目的**动画相关部分**（`dev.yessb.compat.YsmSlashBladeModule`、
-`dev.yessb.compat.SlashBladeBridge#comboAnimationName`）**参考了其 1.20.1 源码的行为语义**。
+`dev.yessb.compat.SlashBladeBridge#comboAnimationName`）**参考了其公开源码的行为语义**。
 
-- 来源：`YesSteveModel/YesSteveModel`，分支 **`dev/1.20`**
-- 协议：**Apache-2.0**
-- 参考的文件：`src/main/java/com/elfmcys/ysm/client/compat/slashblade/`
-  （`SlashBladeAnimation` / `SlashBladeCompat` / `SlashBladeResharped`）
+- 来源：`YesSteveModel/YesSteveModel`，分支 **`dev/1.20`**（默认分支）
+- 协议：**Apache-2.0**（`LICENSE` 为 Apache 2.0 全文）
+- 参考的文件：`client/compat/slashblade/`
+  （`SlashBladeAnimation` / `SlashBladeCompat` / `SlashBladeResharped` / `SlashBladeRender`）与 `init/ModItemTags`
 - 参考的语义：
   - "是否拔刀剑"的判定条件；
-  - 由拔刀剑连招状态算出动画名的规则（含超时窗口、`combo_a4_ex → combo_a4ex` 的改名、
-    居合斩的空中变体）；
+  - 由拔刀剑连招状态算出动画名的规则（含超时窗口、`combo_a4_ex → combo_a4ex` 的归一化、
+    `standby` 超时 `-553`、居合斩的空中变体）；
   - 主动画前缀 `slashblade:` 与其回退行为。
 
 本项目是**参照该语义自行实现**的，未复制其代码文件。
 
-> 说明：上述仓库是 **1.20.1** 的源码。本项目实际注入的目标是 **1.21.1 的发布版构建**，
-> 两者是同一项目下的不同产物。本项目不复制、不内嵌、不再分发该 1.21.1 构建的任何代码或资源；
-> 仅在运行时以 Mixin 补充返回值。
+> **⚠️ 版本与协议上的重要区分（务必看清）**
+>
+> | | 公开源码仓库 | 本项目实际注入的目标 |
+> |---|---|---|
+> | 产物 | 下一代重构版（`gradle.properties` → `3.0-dev-forge+mc1.20.1`） | `2.6.5-neoforge+mc1.21.1` 发布版 |
+> | 平台 | Forge / Minecraft **1.20.1** / Java 17 | NeoForge / Minecraft **1.21.1** / Java 21 |
+> | 协议 | **Apache-2.0**（仅覆盖其原创代码；内置模型资产、第三方作品各有其自身协议，见其 `NOTICE.md`） | **All Rights Reserved**（`META-INF/neoforge.mods.toml` → `license="All rights reserved"`） |
+> | 源码可得性 | 公开，但 README 自述"**未完成、请勿用于生产环境**"，且"网络协议与模型管理代码尚未提交" | **无对应源码，且类名经过混淆** |
+>
+> 因此：**公开源码只用于语义对照，不替代注入靶点**。本项目实际注入的是那个 ARR 的 2.6.5 构建，
+> 对该构建**不复制、不内嵌、不再分发任何代码或资源**，仅在运行时以 Mixin 补充返回值。
+>
+> 该注入的授权与上游答复见 **第五节**；本项目已就"为定位问题做过局部字节码层面的分析"
+> 一事主动向作者说明，作者已知悉并表示理解。
 
 ---
 
@@ -93,7 +104,28 @@ SOFTWARE.
 
 ---
 
-## 五、运行时调用的公开 API：拔刀剑：重锋
+## 五、运行时注入的对象：Yes Steve Model（已获作者同意）
+
+本项目的**动画修复**部分（`dev.yessb.compat.YsmSlashBladeModule`、
+`dev.yessb.mixin.ysm` 下的两个混入）以 Mixin **在运行时补充返回值**的方式，
+作用在 **Yes Steve Model 的 1.21.1 发布版构建**（发布版协议为 All Rights Reserved）之上。
+
+- 本项目**不复制、不内嵌、不再分发该构建的任何代码或资源**；
+- 被补充的部分是**上游尚未实现的占位实现**（其拔刀剑联动在 2.6.5 时还是空桩：
+  判定恒 `false`、取名为空），本项目只把"是否拔刀剑"与"取动画名"两个返回值补成真实语义；
+- **原因已由作者答复确认**：并非有意停用，而是当时 **1.21.1 上尚未发布拔刀剑**、适配还没做；
+  作者并明确表示**之后会做**这份适配。
+- **本项目就该运行时注入已获得作者同意**，作者亦同意本项目**保留到官方正式修复为止**；
+  本项目已主动向作者说明"为定位问题做过局部字节码层面的分析"一事。
+- **退役承诺**：上游发布正式修复后，本项目会做出声明、标注对应功能失效，必要时从 CurseForge 撤下
+  （按社区惯例**归档而非删除**，避免破坏锁定 file ID + 哈希的整合包）。
+
+> 因为所有注入都带版本白名单与 failure-soft，靶点变化时会自动跳过
+> （表现为功能不生效，不会崩溃），所以退役不存在紧急时间窗。
+
+---
+
+## 六、运行时调用的公开 API：拔刀剑：重锋
 
 - 来源：`SlashBlade:Resharped`（`Quarkrus/SlashBlade_Resharped`）
 - 协议：**代码 MIT / 美术资源 All Rights Reserved**
@@ -108,7 +140,7 @@ SOFTWARE.
 
 ---
 
-## 六、其它
+## 七、其它
 
 - **Minecraft / NeoForge / Sponge Mixin**：通过各自的官方公开 API 与标准 Mixin 机制接入，
   本项目不包含其任何代码。
@@ -117,13 +149,15 @@ SOFTWARE.
 
 ---
 
-## 七、免责与再分发提示
+## 八、免责与再分发提示
 
 本项目以 MIT 协议授权（仅覆盖本项目自己的代码）。
 
 **若你要基于本项目二次开发并分发，上述各方的权利与义务仍需你自行确认**，
 包括但不限于：车万女仆协议中的 `for the code part` 限定、
 拔刀剑美术资源的 All Rights Reserved，以及 Yes Steve Model 发布版自身的授权条款。
+（本项目针对 YSM 的运行时注入**已另行获得其作者同意**；
+该同意是**针对本项目**的，不自动延伸到你二次开发后的产物。）
 
 本项目的设计目标是**不与上游产生授权冲突**：不复制、不内嵌、不再分发任何第三方内容，
 只在运行时通过公开 API 互操作。请保持这一原则。
