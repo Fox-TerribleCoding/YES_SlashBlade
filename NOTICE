@@ -19,15 +19,33 @@
 
 ## 二、移植的代码：车万女仆（Touhou Little Maid）
 
-本项目的**女仆拔刀剑渲染**部分（`dev.yessb.compat.TlmMaidBridge`，
-以及 `dev.yessb.mixin.tlm` 下的两个混入）**移植了车万女仆的变换逻辑**。
+本项目的**女仆拔刀剑功能**部分（`dev.yessb.compat.TlmMaidBridge`、
+`dev.yessb.compat.TlmMaidCombatBridge`，以及 `dev.yessb.mixin.tlm` 下的三个混入）
+**按行为语义复刻了车万女仆的两处实现**（下述文件均已在其 `1.20` 与 `1.21` 公开分支中核对）：
 
 - 来源：`TartaricAcid/TouhouLittleMaid`
+
+### 1. 渲染
+
 - 文件：`src/main/java/com/github/tartaricacid/touhoulittlemaid/compat/slashblade/SlashBladeRender.java`
-- 移植内容：`renderMaidMainhandSlashBlade` / `renderMaidOffhandSlashBlade` /
+- 复刻内容：`renderMaidMainhandSlashBlade` / `renderMaidOffhandSlashBlade` /
   `renderGeckoMaidBackSlashBlade` 的**完整变换链与出鞘判定**（`translate` / `rotate` / `scale` 的数值
   与顺序原样照抄，包括 `scale 0.01`、`rotZ(-15)`、"动作后 5 刻内出鞘"等）。
   本项目不修改这些数值（仅把缩放调整为原值的 90%，作为可配置项）。
+
+### 2. 挥刀逻辑
+
+- 文件：`src/main/java/com/github/tartaricacid/touhoulittlemaid/compat/slashblade/SlashBladeCompat.java`
+- 复刻内容：`swingSlashBlade(EntityMaid, ItemStack)` 的**行为语义与全部数值**——
+  "物品是拔刀剑 **且** 当前任务是攻击任务"的前置判定、摆动角取 `[-30, 30)`、
+  以"中心偏移为零 / 不静音 / 非暴击 / 伤害倍率 `1.0` / 击退 `smash`"调用拔刀剑的公开 API 生成斩击特效、
+  以及把"刚刚挥过刀"写入刀状态的时间戳。
+  与其**上游调用点**一致：挂在"实体挥刀"这一时机上，且在同一帧内先做上述两件事、再走原版逻辑。
+- **本项目的实现方式**：`TlmMaidCombatBridge` 是**自行编写**的，不复制其代码文件；
+  唯一被原样固定的东西是**观感与手感所依赖的数值**（见上），以及"必须两边各写一次时间戳"这一行为。
+- ⚠️ **注意本项并不注入车万女仆**：因为 1.21.1 的发布版里那个覆写方法**已不存在**，
+  本项目改为挂在**原版** `net.minecraft.world.entity.LivingEntity#swing(InteractionHand)` 上，
+  自行判定"是不是女仆"。也就是说这一处**没有修改车万女仆的任何字节码**。
 
 **依其协议要求，保留其版权声明如下：**
 
@@ -134,9 +152,15 @@ SOFTWARE.
   - `mods.flammpfeil.slashblade.client.renderer.util.BladeRenderState`（部件渲染）
   - `mods.flammpfeil.slashblade.capability.slashblade.BladeStateAccess`（连招状态读取）
   - `mods.flammpfeil.slashblade.registry.ComboStateRegistry`（连招状态表）
+  - `mods.flammpfeil.slashblade.util.AttackManager#doSlash`（斩击特效实体，女仆挥刀用）
+  - `mods.flammpfeil.slashblade.util.KnockBacks#smash`（同上）
 
   这些依赖**仅在编译期存在，运行时不打包进本项目的 jar**；
   且**不引用、不再分发其任何美术资源**。
+
+  > 关于 `doSlash` 的一个事实（本项目据此设计，非猜测）：它在**客户端直接 `return null`**，
+  > 因此刀光只能由服务端生成、再由原版实体同步发给客户端。
+  > 本节与第二节第 2 条是同一件事的两面，README §3.5 有完整的信号链说明。
 
 ---
 

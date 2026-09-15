@@ -13,7 +13,9 @@ import java.util.Set;
 /**
  * 靶向车万女仆的那组混入的准入开关。
  *
- * <p>这些混入指向 TLM 的内部结构（`GeckoLayerMaidHeld`），跨版本可能失效。
+ * <p>这些混入指向 TLM 的内部结构（`GeckoLayerMaidHeld` / `GeckoLayerMaidBackItem`），
+ * 或者指向原版 `LivingEntity#swing`（因为 1.21.1 的 `EntityMaid` 已经没有那个覆写了），
+ * 跨版本可能失效。
  * 因此策略与 YSM 那组一致：拿不准就放行，只有"明确不支持"才拒绝 ——
  * 注入本身是 failure-soft 的（`required=false` + `defaultRequire=0`），
  * 靶点不存在时只是这一项不生效，不会影响游戏。
@@ -43,7 +45,7 @@ public final class TlmMixinPlugin implements IMixinConfigPlugin {
     @Override
     public boolean shouldApplyMixin(String targetClassName, String mixinClassName) {
         try {
-            if (!FixConfig.enabled || !FixConfig.maidSlashBlade) {
+            if (!FixConfig.enabled || !(FixConfig.maidSlashBlade || FixConfig.maidSlashBladeAttack)) {
                 return false;
             }
             // 早期查询拿不到就放行，绝不据此下结论

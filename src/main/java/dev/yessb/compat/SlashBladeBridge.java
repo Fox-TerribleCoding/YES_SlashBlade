@@ -16,6 +16,8 @@ import mods.flammpfeil.slashblade.init.DefaultResources;
 import mods.flammpfeil.slashblade.item.ItemSlashBlade;
 import mods.flammpfeil.slashblade.registry.ComboStateRegistry;
 import mods.flammpfeil.slashblade.registry.combo.ComboState;
+import mods.flammpfeil.slashblade.util.AttackManager;
+import mods.flammpfeil.slashblade.util.KnockBacks;
 import net.minecraft.client.CameraType;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.model.EntityModel;
@@ -141,23 +143,23 @@ public final class SlashBladeBridge {
     public static String comboAnimationName(LivingEntity entity) {
         try {
             if (entity == null) {
-                return "";
+                return bail("entity 为 null");
             }
             ItemStack stack = entity.getMainHandItem();
             if (!isBlade(stack)) {
-                return "";
+                return bail("主手不是拔刀剑：" + stack);
             }
             ISlashBladeState state = BladeStateAccess.of(stack).orElse(null);
             if (state == null) {
-                return "";
+                return bail("BladeStateAccess.of(stack) 为空");
             }
             ResourceLocation comboSeq = state.getComboSeq();
             if (comboSeq == null) {
-                return "";
+                return bail("getComboSeq() 为 null");
             }
             ComboState combo = ComboStateRegistry.REGISTRY.get(comboSeq);
             if (combo == null) {
-                return "";
+                return bail("连招注册表里没有 " + comboSeq + "（可能是别的模组注册的状态名）");
             }
 
             String stateName = comboSeq.toString();
@@ -166,9 +168,18 @@ public final class SlashBladeBridge {
                 timeoutMs -= STANDBY_TIMEOUT_TRIM_MS;
             }
             // getElapsedTime 是拔刀剑自己的公开助手：max(0, 游戏时间 - 上次动作时间)，单位是刻
-            long elapsedMs = state.getElapsedTime(entity) * MS_PER_TICK;
+            long elapsedTicks = state.getElapsedTime(entity);
+            long elapsedMs = elapsedTicks * MS_PER_TICK;
             if (elapsedMs > timeoutMs) {
-                return "";
+                // ★ 这一条在 1.0.1 里是完全静默的，导致「装了别的模组后剑技动画整条消失」
+                //   只能看到"什么都没发生"，分不清是没被调用、超时、还是别的分支。
+                //   把实际数值打出来，一次进游戏就能定论。
+                return bail("超时：seq=" + stateName
+                        + " elapsed=" + elapsedTicks + "刻/" + elapsedMs + "ms"
+                        + " timeout=" + timeoutMs + "ms"
+                        + " lastActionTime=" + state.getLastActionTime()
+                        + " gameTime=" + entity.level().getGameTime()
+                        + " 该状态帧区间=" + combo.getStartFrame() + ".." + combo.getEndFrame());
             }
 
             String animation = stateName;
@@ -184,9 +195,37 @@ public final class SlashBladeBridge {
             }
             return animation;
         } catch (Throwable t) {
-            // 版本差异导致 API 对不上时安静地当作"没有剑技动画"
+            // 版本差异导致 API 对不上时安静地当作"没有剑技动画"。
+            // 但**必须留下痕迹**：早前这里是完全静默的，
+            // 一旦第三方模组让某个 API 抛异常，剑技动画会整条消失且毫无线索。
+            return bail("异常 " + t.getClass().getSimpleName() + ": " + t.getMessage());
+        }
+    }
+
+    // ---------------------------------------------------------------- 诊断
+
+    private static long lastBailAt;
+    private static String lastBailReason = "";
+
+    /**
+     * 报告"为什么这一步没给出剑技动画名"，然后返回空串。
+     *
+     * <p>节流 2 秒，并且**按原因去重** —— 与 {@code diag} 的全局节流不同，
+     * 不同的失败原因都会被单独记一条，否则第一条会把后面全挡掉。
+     * 仅在 {@code debugLog=true} 时输出。
+     */
+    private static String bail(String reason) {
+        if (!FixConfig.debugLog) {
             return "";
         }
+        long now = System.currentTimeMillis();
+        if (reason.equals(lastBailReason) && now - lastBailAt < 2000L) {
+            return "";
+        }
+        lastBailAt = now;
+        lastBailReason = reason;
+        YesSlashBladeFix.LOGGER.info("[YES-SB] 剑技动画为空 ⇒ {}", reason);
+        return "";
     }
 
     /**
@@ -340,6 +379,28 @@ public final class SlashBladeBridge {
     private static final float FIRST_PERSON_ICON_SCALE = 0.0095F;
 
     /**
+     * 本地玩家**当前**两只手里有没有拔刀剑。
+     *
+     * <p>用来把「玩家正握着的刀」与「切换物品装备动画里正在离场的那把刀」区分开。
+     * 后者由 {@code ItemInHandRenderer} 回放旧物品造成，不该走本模组的"手持化"路径 ——
+     * 否则会出现"切物品后冒出一把横向的刀并跟着装备动画下落"。
+     *
+     * <p>刻意用 {@code mc.player} 而不是传进来的 {@code stack}：
+     * 那个 stack 正是"被渲染的物品"，在装备动画里它就是那把离场的刀，用它判断等于没判断。
+     */
+    private static boolean yes_sb$playerHoldsBlade() {
+        try {
+            Minecraft mc = Minecraft.getInstance();
+            if (mc == null || mc.player == null) {
+                return false;
+            }
+            return isBlade(mc.player.getMainHandItem()) || isBlade(mc.player.getOffhandItem());
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /**
      * 第一人称：把拔刀剑当作普通手持物来画。
      *
      * <p>拔刀剑原本在第一人称会调用 {@code BladeFirstPersonRender}，它会重置姿态矩阵、
@@ -358,7 +419,17 @@ public final class SlashBladeBridge {
      */
     public static void renderFirstPersonBlade(Object original, Object owner, ItemStack stack,
                                               PoseStack poseStack, MultiBufferSource buffer, int light) {
-        if (FixConfig.enabled && FixConfig.firstPersonAsHeldItem && owner instanceof SlashBladeTEISR teisr) {
+        // ★ 只有"玩家此刻确实握着拔刀剑"时才接管第一人称。
+        //
+        // 漏掉这一条的后果（实测）：切换物品时 ItemInHandRenderer 会带着装备动画把**旧物品**
+        // 再渲染一次，那一刻玩家手里已经是别的东西了 —— 于是 yes_sb$originalWillRender()
+        // 里最后那句「主手是不是拔刀剑」判 false，auto 模式就走进"原版画不出来 ⇒ 本模组兜底"
+        // 的分支，把**正在离场的那把刀**按手持物画了出来。
+        // 表现就是「切物品后冒出一把横向的刀并跟着装备动画下落」。
+        //
+        // 兜底分支的本意是"原版真画不出来时别让第一人称空着"，而不是"玩家手里没刀了也去补一把"。
+        if (FixConfig.enabled && FixConfig.firstPersonAsHeldItem && owner instanceof SlashBladeTEISR teisr
+                && yes_sb$playerHoldsBlade()) {
             try {
                 String mode = FixConfig.firstPersonMode;
                 if ("model".equals(mode)) {
@@ -745,6 +816,62 @@ public final class SlashBladeBridge {
             return entity.level().getGameTime() - state.getLastActionTime();
         } catch (Throwable t) {
             return -1L;
+        }
+    }
+
+    /**
+     * 挥出一记斩击特效（刀光）。
+     *
+     * <p><b>⚠️ 客户端调用是空转</b>：拔刀剑的 {@code AttackManager.doSlash(...)} 第一句就是
+     * {@code if (level.isClientSide()) return null;}（1.9.65 与 2.0.7 逐条一致）。
+     * 真正的刀光只能由<b>服务端</b>生成 —— 生成的是 {@code EntitySlashEffect} 实体，
+     * 由原版实体同步机制自动发给所有客户端。
+     * 所以本方法在两个侧都调一遍是<b>安全</b>的，客户端那次只是白跑一趟。
+     *
+     * <p>这里只是调用拔刀剑自己的公开 API，不含它的任何实现（MIT，见 NOTICE 第六节）。
+     *
+     * @return 是否真的生成了特效（客户端恒 false）
+     */
+    public static boolean showSlashArc(LivingEntity entity, float roll) {
+        try {
+            if (entity == null) {
+                return false;
+            }
+            // 与上游挥刀兼容相同的参数：绕中心偏移为零、不静音、非暴击、
+            // 伤害倍率 1.0（真实伤害由女仆自己的 doHurtTarget 负责，这里纯观赏）、
+            // 击退沿用拔刀剑的 smash。
+            return AttackManager.doSlash(entity, roll, Vec3.ZERO, false, false, 1.0D, KnockBacks.smash) != null;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /**
+     * 把"刚刚挥过刀"这一刻记到<b>当前这一侧</b>的物品堆上。
+     *
+     * <p>这是"刀模出鞘"的唯一驱动量：渲染侧读
+     * {@link #ticksSinceLastAction(LivingEntity, ItemStack)}，而它算的正是
+     * {@code gameTime - lastActionTime}。
+     *
+     * <p>关键点在于<b>客户端那次 swing 也要写上</b>：客户端手上的 ItemStack 是它自己那份
+     * （随装备同步包更新），渲染读的也是那一份。服务端写的值除非重新同步装备，
+     * 否则客户端看不到 —— 所以两侧各写各的，才算真的生效。
+     *
+     * @return 是否写成功
+     */
+    public static boolean markLastAction(LivingEntity entity, ItemStack stack) {
+        try {
+            if (entity == null) {
+                return false;
+            }
+            ISlashBladeState state = BladeStateAccess.of(stack).orElse(null);
+            if (state == null) {
+                return false;
+            }
+            state.setLastActionTime(entity.level().getGameTime());
+            return true;
+        } catch (Throwable t) {
+            return false;
         }
     }
 

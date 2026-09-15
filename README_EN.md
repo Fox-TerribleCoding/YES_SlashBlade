@@ -21,7 +21,7 @@ but lost on 1.21.1.
 | ① | Third-person waist blade / sheath | blade & sheath are **not rendered at all** |
 | ② | SlashBlade combo (skill) animations | only the plain swing animation plays |
 | ③ | SlashBlade variants of main animations | idle / walk look identical to a vanilla sword |
-| ④ | Touhou Little Maid's blade | maid holds nothing; back slot draws a **flat icon** |
+| ④ | Touhou Little Maid's blade | maid holds nothing; back slot draws a **flat icon**; attacking shows **no slash arc** and the blade never leaves its sheath |
 
 Design rules: no third-party file is modified, no third-party code or assets are bundled
 or redistributed, and no reflection into someone else's private state.
@@ -44,7 +44,7 @@ it never crashes. Nothing happens at all without YSM
 
 ## 2. Installation
 
-Drop `YES_SB-1.0.1.jar` into `.minecraft/mods/`
+Drop `YES_SB-1.0.8.jar` into `.minecraft/mods/`
 (or `versions/<name>/mods/` when using version isolation).
 
 ## 3. Root causes (why the fix looks like this)
@@ -62,6 +62,8 @@ Drop `YES_SB-1.0.1.jar` into `.minecraft/mods/`
 4. **Touhou Little Maid dropped a package during the 1.21.1 port.** In its `1.20` and `1.21`
    branches `compat/slashblade` exists and `GeckoLayerMaidHeld.java` is byte-identical
    between the two, yet the published 1.21.1 jar contains **no reference to `slashblade` at all**.
+   Three things were lost: the maid's hand render branch, the back-slot render branch, and the
+   `swing()` override that gives the maid a **slash arc and a drawn blade** when she attacks.
 
 ## 4. How it is fixed
 
@@ -77,7 +79,22 @@ Drop `YES_SB-1.0.1.jar` into `.minecraft/mods/`
   animation does not exist in the model pack, the mod returns **an empty string** instead,
   so YSM falls back to its normal swing logic instead of freezing the pose.
 - **④ Maid branches restored verbatim** from TLM's own source, transform values unchanged.
-- **Failure-soft everywhere.** All four targeted injections require the target mod to be
+- **④ Maid swing restored too.** Upstream hooked `EntityMaid#swing`; that override does not
+  exist in the published 1.21.1 jar, so this mod hooks vanilla
+  `LivingEntity#swing(InteractionHand)` instead and checks "is this a maid holding a blade on
+  the attack task". `swing()` is the one method that runs on **both** sides, which is exactly
+  why upstream used it — the two side effects belong to different sides:
+
+  | Effect | Side that matters | Mechanism |
+  |---|---|---|
+  | Slash arc | **server** | spawns the effect entity; vanilla entity tracking syncs it to clients |
+  | Blade drawn from sheath | **client** | writes `lastActionTime` on the client's own ItemStack |
+
+  Note that SlashBlade's `AttackManager.doSlash(...)` returns `null` immediately on the
+  client (true for both 1.9.65 and 2.0.7), so the arc can only come from the server. It is
+  a **yield-guarded** injection: if upstream ever adds the override back, this one disables
+  itself rather than firing twice.
+- **Failure-soft everywhere.** All targeted injections require the target mod to be
   loaded *and* a matching YSM version prefix (default `2.6.`); the mixin configs use
   `required=false` with `defaultRequire=0`. Any mismatch means "feature does nothing",
   **never a crash**.
@@ -100,8 +117,9 @@ Most-used keys:
 | `slashbladeComboAnimations` | `true` | combo (skill) animation triggering |
 | `slashbladeMainStateAnimations` | `true` | `slashblade:idle/walk/...` main-animation variants |
 | `slashbladeAnimations` | `false` | item-classifier injection (`sword` → `slashblade`) — a behaviour change, off by default |
-| `maidSlashBlade` | `true` | restore TLM's maid blade branches |
-| `debugLog` | `false` | verbose diagnostics (including whether the model pack has a given animation) |
+| `maidSlashBlade` | `true` | restore TLM's maid blade render branches |
+| `maidSlashBladeAttack` | `true` | restore the maid's swing (server-side arc + client-side sheath timestamp); separate from the row above so the two paths can be told apart |
+| `debugLog` | `false` | **troubleshooting switch** (zero cost while off). When reporting an issue, turn it on once and attach every `[YES-SB]` line — this mod mostly restores things whose absence is invisible, so those lines are usually the only evidence available |
 
 Scale reference: SlashBlade itself uses `0.003125` for a blade *lying on a rack or in a
 display frame*, and `0.0095` for one *held in hand*. The default `0.0062` is the geometric
@@ -120,12 +138,16 @@ The full Chinese configuration reference — every key, one row each — is in
   from the *vanilla* player model parts, while the character on screen is a *YSM* model playing
   *YSM* animations. Two animation systems, so they cannot agree. Fixing it properly requires
   binding the blade to YSM's own locator bones — deliberately **not done** (see below).
-- **The maid's *attack logic* is not restored.** That is server-side AI behaviour, and
-  it requires making this mod a both-sides mod, plus damage/knockback and combo-state
-  considerations. It is **out of scope on purpose** — use a dedicated mod for it:
+- **The maid's slash arc and drawn blade are restored (1.0.5); her *combo state* is not.**
+  The arc and the sheath animation were a port omission and are now back (see §4).
+  Getting the maid into a SlashBlade **combo state** (so she plays blade skills rather than a
+  plain swing) is still out of scope — use a dedicated mod for it:
   [TLM: True POWER](https://modrinth.com/mod/true-power-of-maid).
   This mod only guarantees that the **trigger hook works**; when True POWER drives the maid
   into a combo state, the animations play.
+- **On a dedicated server without this mod installed**, a maid will draw her blade but show
+  **no slash arc** — the arc is spawned server-side. In single-player the integrated server
+  shares the same JVM and classes, so both halves work.
 - **Bone binding is not implemented.** YSM 2.6.5's 933 classes are obfuscated; a wrong
   injection crashes the game rather than silently doing nothing, and the current fixed-offset
   approach is sufficient. Two triggers would make it worth re-evaluating:
@@ -141,7 +163,7 @@ The full Chinese configuration reference — every key, one row each — is in
 | YSM | `ysm-2.6.5-neoforge+mc1.21.1-release.jar` | 63,463,229 B | `B285C73D4EC010D9` |
 | SlashBlade: Resharped | `SlashBladeResharped-2.0.7-1.21.1.jar` | 3,886,797 B | `C67653EC0D7E08A7` |
 | Touhou Little Maid | `touhoulittlemaid-1.5.3-neoforge+mc1.21.1.jar` | 24,408,776 B | `F6DB04195820C850` |
-| This mod | `YES_SB-1.0.1.jar` | 130,068 B | `59AD28A612345BE1` |
+| This mod | `YES_SB-1.0.8.jar` | 138,556 B | `FA3BA44DBB685339` |
 
 > This mod's jar entries carry **build timestamps**, so its hash changes on every rebuild
 > even with identical sources — it identifies one specific build, not a constant.
@@ -161,8 +183,9 @@ This is a **temporary patch**, not a replacement.
 - **YSM**: the stub is not a deliberate removal — at the time (YSM 2.6.5), 1.21.1 had no
   SlashBlade release to adapt to. The author confirmed they **will implement it later**, and
   agreed this mod may stay until then. This mod's ②③ parts retire at that point.
-- **Touhou Little Maid**: the two missing branches are a confirmed port omission
-  (source present, published jar contains zero references). This mod simply puts them back;
+- **Touhou Little Maid**: the three missing pieces are a confirmed port omission
+  (source present, published jar contains zero references, and the `swing` override is simply
+  absent). This mod simply puts them back;
   the maid part retires once upstream ships it.
 
 Details, including the author's replies and the retirement commitments, are in

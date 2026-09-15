@@ -6,7 +6,7 @@ displayURL="https://github.com/Fox-TerribleCoding/YES_SlashBlade"
 
 [[mods]]
     modId="yes_sb"
-    version="1.0.1"
+    version="1.0.8"
     displayName="Yes Steve Model x SlashBlade Fix (YES-SB)"
     authors="YES-SB"
     logoFile="icon.png"
@@ -17,7 +17,8 @@ displayURL="https://github.com/Fox-TerribleCoding/YES_SlashBlade"
   1. 第三人称的腰挂刀与连招出鞘（YSM 跳过了原版渲染器，连带掐掉了拔刀剑的腰刀层）
   2. 拔刀剑剑技动画（YSM 2.6.5 的拔刀剑联动模块是空实现，导致剑技动画无法触发）
   3. 主动画的拔刀剑变体（持刀时的待机 / 走 / 跑 / 跳 / 潜行专属动作）
-  4. 车万女仆手里的拔刀剑（TLM 1.21.1 发布版丢失了 compat/slashblade 包）
+  4. 车万女仆手里的拔刀剑与它的挥刀表现（TLM 1.21.1 发布版丢失了整个 compat/slashblade 包：
+     手部/背槽渲染，以及挥刀时的刀光与出鞘动作）
 
 第一人称不再由本模组接管 —— 它本来就没被 YSM 碰过，交回拔刀剑原生行为（= 1.20.1 的样子）。
 

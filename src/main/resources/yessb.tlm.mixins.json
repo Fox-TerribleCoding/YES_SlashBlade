@@ -6,7 +6,8 @@
   "compatibilityLevel": "JAVA_21",
   "client": [
     "MixinTlmMaidHeldLayer",
-    "MixinTlmMaidBackItemLayer"
+    "MixinTlmMaidBackItemLayer",
+    "MixinLivingEntityMaidSwing"
   ],
   "injectors": {
     "defaultRequire": 0

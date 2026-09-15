@@ -1,5 +1,8 @@
 package dev.yessb.compat;
 
+import com.github.tartaricacid.touhoulittlemaid.api.task.IMaidTask;
+import com.github.tartaricacid.touhoulittlemaid.entity.passive.EntityMaid;
+import com.github.tartaricacid.touhoulittlemaid.entity.task.TaskAttack;
 import com.github.tartaricacid.touhoulittlemaid.geckolib3.core.processor.ILocationBone;
 import com.github.tartaricacid.touhoulittlemaid.geckolib3.geo.animated.ILocationModel;
 import com.github.tartaricacid.touhoulittlemaid.geckolib3.util.RenderUtils;
@@ -139,7 +142,8 @@ public final class TlmMaidBridge {
                 if (!offhand) {
                     // 主手这条有"刚出鞘"的姿态；副手那条 TLM 是鞘 + 刀身一起画的，没有这一段
                     long elapsed = SlashBladeBridge.ticksSinceLastAction(maid, stack);
-                    if (elapsed >= 0L && elapsed < FixConfig.maidBladeDrawTicks) {
+                    boolean drawn = elapsed >= 0L && elapsed < FixConfig.maidBladeDrawTicks;
+                    if (drawn) {
                         float i = elapsed + partialTicks;
                         // 分母为什么是 0.007：TLM 原代码照抄自 Bedrock 那条（缩放 0.007），
                         // 而 Gecko 这条的缩放是 0.01。属于上游的既成行为，为对齐手感原样保留。
@@ -148,13 +152,16 @@ public final class TlmMaidBridge {
                         poseStack.mulPose(Axis.YP.rotationDegrees(60.0F + i * 48.0F));
                         poseStack.mulPose(Axis.XP.rotationDegrees(90.0F));
                     }
+                    // 只在"是否出鞘"翻转时打一条：这是唯一能证明
+                    // 「客户端那份时间戳真的写进去了」的观测点（见 §12 的分析）。
+                    noteDrawnState(maid, drawn, elapsed);
                 }
 
                 SlashBladeBridge.renderBladeBody(stack, poseStack, buffer, light);
-                diag("女仆刀：{}手 已由 TLM 路径画出（腰位定位组 {} 根，缩放 {}）",
-                        offhand ? "副" : "主",
-                        (offhand ? model.rightWaistBones() : model.leftWaistBones()).size(),
-                        scale);
+                // 这里刻意<b>不</b>打"已画出"的日志：它每 2 秒就会刷一条，
+                // 而它要证明的事（TLM 渲染路径接管成功）在 1.0.1 时代就已经验证完了 ——
+                // 属于"当时为了证明某条路活着而加、现在只剩噪音"的那一类。
+                // 真正有价值的是失败路径（见 handles() 里那条"没有定位组骨骼 ⇒ 不接管"）。
                 return true;
             } finally {
                 poseStack.popPose();
@@ -195,11 +202,34 @@ public final class TlmMaidBridge {
                 // TLM 背槽版本画的是完整的"刀 + 鞘"
                 SlashBladeBridge.renderSheath(stack, poseStack, buffer, light);
                 SlashBladeBridge.renderBladeBody(stack, poseStack, buffer, light);
-                diag("女仆背槽刀：已由 TLM 路径画出（缩放 {}）", scale);
+                // 同手部那条：成功路径不打日志（理由见上方注释）
                 return true;
             } finally {
                 poseStack.popPose();
             }
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    // ------------------------------------------------------------------ 攻击任务判定
+
+    /**
+     * 这只女仆是不是被指派了"攻击"任务。
+     *
+     * <p>上游的挥刀兼容里有一道前置判定：任务必须是攻击任务，否则砍树、钓鱼之类也会甩出刀光。
+     * 任务 UID 走 TLM 自己的 {@code SynchedEntityData}（{@code DATA_TASK}，字符串），
+     * <b>所以客户端同样拿得到</b> —— 这一条对"客户端那次 swing 也要能通过判定"是必需的。
+     *
+     * <p>本方法只在 TLM 存在时被调用（混入闸门保证），因此可以直接引用它的类型。
+     */
+    public static boolean isAttackTask(LivingEntity maid) {
+        try {
+            if (!(maid instanceof EntityMaid m)) {
+                return false;
+            }
+            IMaidTask task = m.getTask();
+            return task != null && TaskAttack.UID.equals(task.getUid());
         } catch (Throwable t) {
             return false;
         }
@@ -242,5 +272,47 @@ public final class TlmMaidBridge {
         }
         lastDiag = now;
         YesSlashBladeFix.LOGGER.info("[YES-SB] " + fmt, args);
+    }
+
+    /** 上一次观测到的出鞘状态（按实体记，避免多只女仆互相盖掉）。 */
+    private static int lastDrawnEntity = Integer.MIN_VALUE;
+    private static boolean lastDrawn;
+
+    /**
+     * 在"是否出鞘"翻转时打一条。
+     *
+     * <p><b>为什么值得单独一条</b>：出鞘动作完全由 {@code lastActionTime} 驱动，而
+     * 渲染读的是<b>客户端自己那份</b>物品堆。所以这一行是"客户端那次写时间戳到底成没成"
+     * 唯一的观测点 —— 光看服务端的 {@code 时间戳=已写} 是证明不了客户端那一半的。
+     *
+     * <p><b>只打"是"、不打"否"</b>（1.0.8 起）：每次攻击会翻转两次，两条都打就打了一倍噪音，
+     * 而"收回鞘里"这件事本身没有信息量。
+     * 但**每个实体的第一次观测仍然会打**（通常是"否"），那是基线 ——
+     * 留着它是为了**不重犯 §12.9.2 的错**：万一"客户端时间戳链"整个断了，
+     * "是"永远不会出现，这时日志里只剩基线那一条，
+     * 配合两侧的 {@code 时间戳=已写/未写} 依然能定位，而不是"安静得像成功一样"。
+     */
+    private static void noteDrawnState(LivingEntity maid, boolean drawn, long elapsed) {
+        if (!FixConfig.debugLog) {
+            return;
+        }
+        int id = maid.getId();
+        boolean sameEntity = id == lastDrawnEntity;
+        if (sameEntity && drawn == lastDrawn) {
+            return;
+        }
+        boolean firstForEntity = !sameEntity;
+        lastDrawnEntity = id;
+        lastDrawn = drawn;
+
+        if (!drawn && !firstForEntity) {
+            // 收回鞘里：不打（每次攻击两条太吵，且无信息量）
+            return;
+        }
+        YesSlashBladeFix.LOGGER.info(
+                "[YES-SB] 女仆刀：出鞘状态={}（距上次动作 {} 刻，判定窗口 {} 刻）",
+                drawn ? "是 —— 客户端时间戳已生效"
+                        : "否 —— 基线（此后只在出鞘时打一条；一直没有『是』就说明时间戳链断了）",
+                elapsed, FixConfig.maidBladeDrawTicks);
     }
 }

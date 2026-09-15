@@ -34,9 +34,10 @@ import org.slf4j.LoggerFactory;
  *       同一个桩的另一半 —— 持刀时待机/走/跑/跳/潜行会先问 {@code slashblade:idle} 之类，
  *       模型包里有就用专属动作，没有就退回原名。</li>
  *
- *   <li><b>车万女仆</b>（{@code maidSlashBlade}）：
+ *   <li><b>车万女仆</b>（{@code maidSlashBlade} / {@code maidSlashBladeAttack}）：
  *       TLM 1.21.1 的发布版把它的 {@code compat/slashblade} 整个包丢了，
- *       连带手部渲染、背槽渲染、拔刀剑斩击逻辑三处。这里按 TLM 原样补回前两处渲染。</li>
+ *       连带手部渲染、背槽渲染、挥刀表现三处。这里按 TLM 原样补回：
+ *       前两处是渲染，第三处（刀光 + 出鞘动作）是行为。</li>
  * </ol>
  *
  * <p>所有注入都是 failure-soft 的：靶点不存在、版本不匹配、任意一步抛异常，
@@ -77,7 +78,7 @@ public final class YesSlashBladeFix {
             LOGGER.info("[YES-SB] 未检测到 YSM：原版渲染本就正常，无需补偿。");
         } else {
             LOGGER.info("[YES-SB] 已就绪：YSM {}，拔刀剑 {}，车万女仆 {}。"
-                            + "第三人称腰刀补偿={}，剑技动画={}，主动画变体={}，女仆拔刀剑={}，靶向注入版本白名单={}",
+                            + "第三人称腰刀补偿={}，剑技动画={}，主动画变体={}，女仆拔刀剑={}，女仆挥刀={}，靶向注入版本白名单={}",
                     YsmBridge.version(),
                     blade ? "已安装" : "未安装",
                     isTlmLoaded() ? "已安装" : "未安装",
@@ -85,6 +86,7 @@ public final class YesSlashBladeFix {
                     FixConfig.slashbladeComboAnimations ? "开" : "关",
                     FixConfig.slashbladeMainStateAnimations ? "开" : "关",
                     FixConfig.maidSlashBlade ? "开" : "关",
+                    FixConfig.maidSlashBladeAttack ? "开" : "关",
                     YsmBridge.isSupportedVersion() ? "命中" : "未命中（靶向注入已跳过）");
         }
     }

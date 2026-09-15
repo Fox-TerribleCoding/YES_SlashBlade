@@ -22,7 +22,7 @@
 | ① | **第三人称腰挂刀补偿渲染** | 第三人称的腰挂刀 / 刀鞘完全不显示 |
 | ② | **剑技动画触发** | 连招时只播普通挥动，剑技动作不出现 |
 | ③ | **主动画的拔刀剑变体** | 持刀时站姿 / 走路动作与普通剑无异 |
-| ④ | **车万女仆的拔刀剑** | 女仆手里的刀不显示 / 背槽显示成平面图标 |
+| ④ | **车万女仆的拔刀剑** | 女仆手里的刀不显示 / 背槽显示成平面图标 / 攻击时没有刀光、刀不出鞘 |
 
 设计原则：
 
@@ -45,6 +45,7 @@
 | 持刀时的待机 / 行走姿态 | 拔刀剑专属 | 与普通剑相同 |
 | 车万女仆持刀 | 正常 | **同样丢失** |
 | 女仆背槽（装饰槽）的刀 | 正常 | 显示成**平面图标** |
+| 女仆持刀攻击 | 有刀光，刀会出鞘 | **没有刀光，刀一直插在鞘里不动** |
 
 > 关键对照：同一个 YSM 版本号（2.6.5），1.20.1 与 1.21.1 两个构建的表现天差地别。
 > 也就是说，问题出在 **YSM 的 1.21.1 构建**，而不是"拔刀剑 2.x 重构了什么东西"。
@@ -118,12 +119,12 @@ if (!entity.isSleeping() && isSlashBlade(entity.getMainHandItem())) {
 > 由于 `ItemSlashBlade extends SwordItem`（已核实），拔刀剑会被归到 **`sword`**，
 > 而不是官方约定的 **`slashblade`**。这是**另一条**独立路径，本模组默认不动它（见 §5 `slashbladeAnimations`）。
 
-### 2.4 车万女仆：1.21.1 发布版丢了两处分支
+### 2.4 车万女仆：1.21.1 发布版丢了三处
 
-车万女仆（TLM）自己实现了女仆的拔刀剑渲染，在 `1.20` 与 `1.21` 分支源码里都还在。
+车万女仆（TLM）自己实现了女仆的拔刀剑渲染与挥刀，在 `1.20` 与 `1.21` 分支源码里都还在。
 但 **1.21.1 的发布版 jar 里，`compat/slashblade` 整个包都不存在**。
 
-对照源码与发布版的字节码，丢的是这两处**渲染分支**：
+对照源码与发布版的字节码，丢的是这三处 —— 前两处是**渲染分支**：
 
 **手部**（`GeckoLayerMaidHeld.render`）—— 源码里是：
 
@@ -149,6 +150,26 @@ if (SlashBladeCompat.isSlashBladeItem(stack)) {
 ```
 
 发布版同样只剩 `else`。于是装饰槽里的拔刀剑掉进 `FIXED` 上下文，被画成**平面图标**。
+
+**挥刀**（`EntityMaid.swing`）—— 源码里是：
+
+```java
+@Override
+public void swing(InteractionHand pHand) {
+    SlashBladeCompat.swingSlashBlade(this, getItemInHand(pHand));
+    super.swing(pHand);
+}
+```
+
+发布版里**连这个覆写方法本身都不存在**（`javap -p` 全表只剩 `isSwingingArms` / `setSwingingArms`），
+于是女仆照常挥刀、照常造成伤害，却**没有刀光、刀也不出鞘**。
+
+> 这一处的行为与另外两处不太一样，值得单独说清：
+> `swingSlashBlade` 的两个副作用**分别属于两侧** ——
+> 服务端生成斩击特效实体（由原版实体同步自动发给客户端，这就是"刀光"），
+> 客户端写物品上的 `lastActionTime`（渲染层靠它判断"刚出鞘"）。
+> 而 `swing()` 恰好是**同一份代码会在两侧各跑一次**的方法，所以上游把它挂在这里。
+> 详见 §3.4。
 
 > 证据（可复现）：
 > 1. `1.21` 分支的 `GeckoLayerMaidHeld.java` 与 `1.20` 分支**逐字节完全相同**（均 5371 字节），
@@ -239,9 +260,48 @@ YSM 的持握/挥动解析器会按"连招状态"取一个动画名再播放。�
 > TLM 源码里主手的刀是画在**左侧腰位**上的（源码注释 `// 主手的刀渲染在左边`），
 > 不是画在手里 —— 这是 TLM 的设计，本模组保持一致。
 
-### 3.5 注入的失败保护
+### 3.5 ④ 女仆的挥刀（刀光 + 出鞘）
 
-四处靶向注入都指向第三方模组的内部结构，因此统一采用：
+同样是补回 TLM 丢掉的第三处，但这一处补的是**行为**而不是渲染。
+
+**信号是怎么来的**（客户端并不知道"女仆挥刀了"，它只收到一个动画包）：
+
+```
+【服务端】TLM MaidMeleeAttack → maid.swing(MAIN_HAND)
+             └ LivingEntity.swing(hand,false) → ClientboundAnimatePacket(this, 0)
+                                              → ServerChunkCache#broadcast
+【客户端】ClientPacketListener#handleAnimate → entity.swing(MAIN_HAND)
+```
+
+⇒ `swing()` 是**两侧都会跑**的方法。上游正是利用这一点，让两个副作用各归其位：
+
+| 副作用 | 生效的一侧 | 机制 |
+|---|---|---|
+| 刀光（斩击特效） | **服务端** | 生成 `EntitySlashEffect` 实体，由原版实体同步发给所有客户端 |
+| 刀模出鞘动作 | **客户端** | 写客户端自己那份物品上的 `lastActionTime`，渲染层读的就是它 |
+
+> ⚠️ 一个容易想当然的地方：拔刀剑的 `AttackManager.doSlash(...)`
+> **在客户端第一句就 `return null`**（1.9.65 与 2.0.7 逐条一致），
+> 所以"客户端调它来生成本地刀光"是行不通的。但它**不影响**紧随其后的写时间戳那一句 ——
+> 客户端那次调用照样把出鞘动作驱动起来了。
+
+**本模组怎么挂**：TLM 1.21.1 里 `EntityMaid#swing` 这个覆写**已经不存在**，
+所以不能打它；本模组改为挂在**原版** `LivingEntity#swing(InteractionHand)` 的 HEAD，
+自行判定"是不是女仆 / 拿的是不是拔刀剑 / 是不是攻击任务"。
+
+- 因此这一处**没有修改车万女仆的任何字节码**；
+- 带**让路闸**：若上游日后自己把覆写加回来，本项会自动失效，
+  不会出现同一帧两遍、两道刀光的重复；
+- 开关 `maidSlashBladeAttack`（默认 `true`），与渲染开关 `maidSlashBlade` 分开，便于对照排查。
+
+> **单机的边界说明**：混入是作用在**类**上的，单机里集成服务端与客户端是同一个 JVM、
+> 同一份 `LivingEntity` 类，所以两侧的副作用都能拿到。
+> 若是在**专用服务器**上使用而服务器没装本模组，女仆只会出鞘、不会有刀光
+> （刀光需要服务端那一侧真的调用拔刀剑的 API）。
+
+### 3.6 注入的失败保护
+
+靶向注入都指向第三方模组的内部结构，因此统一采用：
 
 - 只在「对应模组已加载 **且** YSM 版本命中白名单」时才注入
 - 混入配置 `required=false` + `defaultRequire=0`
@@ -252,7 +312,7 @@ YSM 的持握/挥动解析器会按"连招状态"取一个动画名再播放。�
 
 ## 四、安装
 
-把 `YES_SB-1.0.1.jar` 放进 `.minecraft/mods/`
+把 `YES_SB-1.0.8.jar` 放进 `.minecraft/mods/`
 （版本隔离时是 `versions/<版本名>/mods/`）。
 
 **依赖**（均为可选，缺失时对应部分自动失效，不会崩溃）：
@@ -266,9 +326,29 @@ YSM 的持握/挥动解析器会按"连招状态"取一个动画名再播放。�
 启动后日志中应出现（版本与开关状态随实际环境变化）：
 
 ```
-[YES-SB] 已就绪：YSM 2.6.5-neoforge+mc1.21.1，拔刀剑 已安装，车万女仆 已安装。第三人称腰刀补偿=开，剑技动画=开，主动画变体=开，女仆拔刀剑=开，靶向注入版本白名单=命中
+[YES-SB] 已就绪：YSM 2.6.5-neoforge+mc1.21.1，拔刀剑 已安装，车万女仆 已安装。第三人称腰刀补偿=开，剑技动画=开，主动画变体=开，女仆拔刀剑=开，女仆挥刀=开，靶向注入版本白名单=命中
 [YES-SB] 注入女仆渲染层：com.github.tartaricacid.touhoulittlemaid.client.renderer.entity.geckolayer.GeckoLayerMaidHeld
+[YES-SB] 注入女仆渲染层：com.github.tartaricacid.touhoulittlemaid.client.renderer.entity.geckolayer.GeckoLayerMaidBackItem
+[YES-SB] 注入女仆渲染层：net.minecraft.world.entity.LivingEntity
 ```
+
+> 最后一行是女仆的**挥刀**那一处（§3.5）—— 它打的是原版 `LivingEntity#swing`，
+> 因为 1.21.1 的 `EntityMaid` 已经没有那个覆写了。
+> 开 `debugLog` 后，女仆挥刀时会打印一行带**服务端/客户端**字样的诊断
+> （每侧前 3 条必打，之后按侧各自节流 2 秒；结果变化也一定打）：
+> ```
+> [YES-SB] 女仆挥砍：侧=服务端 手=主手 结果=生效 刀光=已生成 时间戳=已写 累计=1 任务=touhou_little_maid:attack
+> [YES-SB] 女仆挥砍：侧=客户端 手=主手 结果=生效 刀光=未生成 时间戳=已写 累计=1 任务=touhou_little_maid:attack
+> ```
+> **两侧都应当出现。** 客户端那条的 `刀光=未生成` 是正常的 —— 拔刀剑的 `doSlash`
+> 在客户端直接空转，刀光只能由服务端生成（见 §3.5）。
+> 早退时 `结果` 会写成原因（`让路（上游已自己声明 swing 覆写）` /
+> `跳过（该手不是拔刀剑）` / `跳过（任务不是攻击任务）`），异常会带 `★异常 …`。
+>
+> 另外"出鞘状态"翻转时还会打一条，用来证明**客户端那份时间戳真的生效了**：
+> ```
+> [YES-SB] 女仆刀：出鞘状态=是 —— 客户端时间戳已生效（距上次动作 0 刻，判定窗口 5 刻）
+> ```
 
 若未安装 YSM，会输出 `[YES-SB] 未检测到 YSM：原版渲染本就正常，无需补偿。` 并保持惰性。
 
@@ -288,7 +368,7 @@ YSM 的持握/挥动解析器会按"连招状态"取一个动画名再播放。�
 | `affectsPlayers` | `true` | 是否处理玩家 |
 | `affectsOtherLivingEntities` | `true` | 是否也处理车万女仆等其它被 YSM 接管的生物 |
 | `ysmVersionPrefix` | `2.6.` | 靶向注入允许生效的 YSM 版本前缀 |
-| `debugLog` | `false` | 详细日志（排查用；会明显增大日志体积） |
+| `debugLog` | `false` | **排查开关**（关闭时开销为零）。报 bug 时请开一次，把日志里所有 `[YES-SB]` 开头的行附上 —— 本模组做的多是"看不见就等于没干活"的补漏，没有这些行很难定位 |
 
 ### ① 第三人称腰挂层补偿
 
@@ -369,6 +449,7 @@ YSM 的持握/挥动解析器会按"连招状态"取一个动画名再播放。�
 | 键 | 默认 | 作用 |
 |---|---|---|
 | `maidSlashBlade` | `true` | 补回女仆的拔刀剑渲染分支（手部 + 背槽） |
+| `maidSlashBladeAttack` | `true` | 补回女仆的**挥刀**（刀光由服务端生成、出鞘时间戳由客户端写入）；与上一项分开，便于对照排查 |
 | `maidBladeScale` | `0.009` | 女仆刀缩放（TLM 原值 0.01 的 90%） |
 | `maidBladeDrawTicks` | `5` | 动作发生后多少刻之内算"刚出鞘"（TLM 原值） |
 | `maidBladeDrawDistanceFactor` | `0.007` | 出鞘那一下位移的分母（TLM 原值，照抄以对齐手感） |
@@ -408,14 +489,19 @@ YSM 的持握/挥动解析器会按"连招状态"取一个动画名再播放。�
 > **重新评估的时机有两个**：① YSM 升到带**不混淆正式接口**（`com.elfmcys.ysm.natives`）的版本；
 > ② YSM 自己把这份拔刀剑适配补上 —— 届时本模组直接退役对应部分即可。
 
-### 6.2 女仆的**攻击逻辑**未恢复 —— 未解决
+### 6.2 女仆的攻击表现 —— 1.0.5 已恢复
 
-TLM 的 `compat/slashblade` 包里除了渲染，还有一处**行为**代码
-`SlashBladeCompat.swingSlashBlade`（让女仆真的打出拔刀剑斩击并盖 `lastActionTime` 时间戳）。
-这也随同一个包在 1.21.1 丢失，**本模组未恢复**。
+TLM 的 `compat/slashblade` 包里除了渲染，还有一处**行为**代码 `SlashBladeCompat.swingSlashBlade`
+（让女仆真的打出拔刀剑斩击并盖 `lastActionTime` 时间戳）。它也随同一个包在 1.21.1 丢失，
+1.0.5 起由本模组补回，做法见 §3.5。
 
-后果：女仆攻击时用的是普通动画，而不是拔刀剑剑技动画。
-（剑技动画的**触发钩子**是好的，缺的是"进入连招状态"这一步。）
+补回后女仆攻击时会**出现刀光**，并且**刀会从鞘里出来**（动作后 5 刻内保持出鞘姿态）。
+
+> 仍属**上游职责**的部分：女仆**如何进入拔刀剑连招状态**（剑技动画而非普通挥动）
+> 不在本模组范围内 —— 本模组只补"上游本来就有、只是被漏掉的这一句调用"。
+> 需要更完整的女仆拔刀剑战斗体验，可以配合
+> [车万女仆：真正的力量（TLM: True POWER）](https://modrinth.com/mod/true-power-of-maid)。
+> 两者不冲突：那条路走通后，本模组补的触发钩子会让动画正常播出来。
 
 ### 6.3 第一人称 —— 已定案（默认不再接管）
 
@@ -458,18 +544,20 @@ TLM 的 `compat/slashblade` 包里除了渲染，还有一处**行为**代码
 与"连招名怎么算"无关（已逐条核对：算出的名字模型包确实有、超时判断也确实在正确地放手），
 与"主动画变体怎么替换"也无关（两条各自单独开启都能复现）。
 
-**归因**：**YSM 1.21.1 构建在"空中动画切回地面动画"这一步的问题。**
-旁证：1.20.1 上**同一套模型包**表现正常；而 YSM 该构建发布时 1.21.1 尚无拔刀剑可适配
-（作者本人的说法：「之前做的时候没有 1.21 的拔刀剑」）。
+**归因**：**这是 YSM 本身的行为，与 Minecraft 版本无关。**
+在 **1.20.1**（YSM 2.6.5-forge ＋ 同一套模型包 ＋ 拔刀剑 1.9.65）上**现象完全一致** ——
+也就是说它不是 1.21.1 的回归，而是 YSM 在"空中动画切回地面动画"这一步的固有行为。
 
 **试过但无效的修法**（记录以免重走）：
 
 - 复刻/关闭原版姿态重算（`refreshModelPose`）—— 无影响；
 - 在"模型包缺这条动画"时返回空串 —— **这是现有设计，而且它是对的**，
   但返回空串并**不能**把模型从上一帧带出来；
-- 补回 1.20.1 的 molang 变量 `slashblade_animation`（1.0.4 已实现）—— 对该现象无改善。
+- 补回 1.20.1 的 molang 变量 `slashblade_animation` —— 对该现象无改善。
+  **该实现已撤回**：既然 1.20.1 上同样复现，它就只可能不是缺的那一环，
+  留着反而多一处与 YSM 内部结构耦合的注入点。
 
-**建议**：当作该 YSM 构建的已知限制；需要时按一下鼠标键即可恢复。
+**建议**：当作 YSM 的已知行为；需要时按一下鼠标键即可恢复。
 相关证据已整理进 `上游反馈稿-YSM-空中动画.md`。
 
 ---
@@ -507,7 +595,7 @@ TLM 的 `compat/slashblade` 包里除了渲染，还有一处**行为**代码
 | 触发条件 | 本模组要做的事 |
 |---|---|
 | YSM 正式实现拔刀剑联动 | 声明 ②③ 失效、移除或标注对应开关（`MixinYsmSlashBladeModule` 等随之失去意义） |
-| 车万女仆正式补回 `compat/slashblade`（渲染 + 逻辑） | 声明 ④ 失效、移除女仆两个混入与 `TlmMaidBridge` |
+| 车万女仆正式补回 `compat/slashblade`（渲染 + 挥刀） | 声明 ④ 失效、移除女仆三个混入与 `TlmMaidBridge` / `TlmMaidCombatBridge` |
 | 两侧都修完 | 本模组整体失去存在意义 ⇒ **从 CurseForge 撤下**（按社区惯例**归档而非删除**，避免破坏锁定 file ID + 哈希的整合包） |
 
 > 四处靶向注入全部带**版本白名单 + failure-soft**：上游一改靶点，对应功能**自动跳过**
@@ -516,9 +604,10 @@ TLM 的 `compat/slashblade` 包里除了渲染，还有一处**行为**代码
 
 ### 7.4 车万女仆（TLM）
 
-§2.4 那两处**是发布版的移植遗漏**：源码在、发布 jar 里没有，可确证：
+§2.4 那三处**是发布版的移植遗漏**：源码在、发布 jar 里没有，可确证：
 TLM 仓库的 `1.21` 分支里 `compat/slashblade/` 三个文件都在，且 `GeckoLayerMaidHeld.java`
-与 `1.20` 分支**逐字节完全相同**，但发布 jar 的类内容里对 `slashblade` 的引用数为 **0**。
+与 `1.20` 分支**逐字节完全相同**，但发布 jar 的类内容里对 `slashblade` 的引用数为 **0**；
+第三处更彻底 —— 发布版的 `EntityMaid` 连 `swing(InteractionHand)` 这个覆写方法都不存在。
 本模组只是把它补回去，变换数值一个没改。**上游修复后，本模组的女仆部分即可退役。**
 
 ### 7.5 Yes Steve Model（YSM）
@@ -543,7 +632,7 @@ TLM 仓库的 `1.21` 分支里 `compat/slashblade/` 三个文件都在，且 `Ge
 | YSM | `ysm-2.6.5-neoforge+mc1.21.1-release.jar` | 63,463,229 B | `B285C73D4EC010D9` |
 | 拔刀剑：重锋 | `SlashBladeResharped-2.0.7-1.21.1.jar` | 3,886,797 B | `C67653EC0D7E08A7` |
 | 车万女仆 | `touhoulittlemaid-1.5.3-neoforge+mc1.21.1.jar` | 24,408,776 B | `F6DB04195820C850` |
-| 本模组 | `YES_SB-1.0.1.jar` | 130,068 B | `59AD28A612345BE1` |
+| 本模组 | `YES_SB-1.0.8.jar` | 138,556 B | `FA3BA44DBB685339` |
 
 > **关于本模组这一行的哈希**：jar 内各条目带**构建时刻的时间戳**，所以**每次重新构建哈希都会变**
 > （哪怕源码一字未改）。它只用于标识**某一次具体构建**，不是可以反复比对的恒定值 ——
@@ -570,15 +659,14 @@ TLM 仓库的 `1.21` 分支里 `compat/slashblade/` 三个文件都在，且 `Ge
 
 ### 8.3 本模组**不做**什么
 
-- **不恢复女仆的攻击逻辑**（§6.2）。原因不是"做不到"，而是：
-  这属于**服务端 AI 行为**，需要让本模组变成双端模组，并处理伤害结算、连招状态推进等一串新问题，
-  收益与风险不成比例；且**已有专门的模组负责女仆的拔刀剑使用**（见下），本模组不与其重叠。
+- **不改女仆的攻击 AI**：攻击目标选择、伤害结算、冷却仍全部是 TLM 自己的 `MaidMeleeAttack`，
+  本模组一个字都没动。1.0.5 补的只是上游漏掉的那一次"挥刀表现"调用（§3.5）。
 - **不接管第一人称**（§6.3）—— 那是拔刀剑自己的行为，本来就没被 YSM 掐掉。
 - **不绑定 YSM 模型骨骼**（§6.1）—— 原因与技术代价见该节。
 - 因此本模组**只解决"渲染被掐掉"与"动画触发被掏空"这两类问题**，其余保持上游原样。
 
 > **关于女仆的剑技动画**：本模组只负责"**触发钩子可用**"（补回空桩的返回值）；
-> 至于女仆**如何打出拔刀剑斩击、如何进入连招状态**，请交给专门做这件事的模组
+> 至于女仆**如何进入连招状态**，请交给专门做这件事的模组
 > —— [车万女仆：真正的力量（TLM: True POWER）](https://modrinth.com/mod/true-power-of-maid)。
 > 两者不冲突：那条路走通后，本模组补的触发钩子会让动画正常播出来。
 
@@ -598,7 +686,7 @@ TLM 仓库的 `1.21` 分支里 `compat/slashblade/` 三个文件都在，且 `Ge
 ### 工程结构
 
 ```
-src/main/java/dev/yessb/                         (18 个 Java 文件)
+src/main/java/dev/yessb/                         (20 个 Java 文件)
 ├── YesSlashBladeFix.java                 # 模组入口；注册客户端初始化 + 配置热重载
 ├── FixConfig.java                        # 纯 properties 配置；ensureLoaded() / reloadIfChanged()
 ├── render/
@@ -609,7 +697,8 @@ src/main/java/dev/yessb/                         (18 个 Java 文件)
 │   ├── BladeTransform.java               # 一个上下文对应的完整变换（缩放/朝向/位移）
 │   ├── YsmBridge.java                    # 只查 YSM 的 modid 与版本号，不引用其任何类型
 │   ├── YsmSlashBladeModule.java          # 与 YSM 拔刀剑模块的隔离层（补返回值）
-│   └── TlmMaidBridge.java                # 与车万女仆的隔离层（手部 / 背槽 的刀）
+│   ├── TlmMaidBridge.java                # 与车万女仆的隔离层（手部 / 背槽 的刀）
+│   └── TlmMaidCombatBridge.java          # 与车万女仆的隔离层（挥刀：刀光 + 出鞘时间戳）
 └── mixin/
     ├── MixinEntityRenderDispatcher.java  # 进场 / 收尾
     ├── MixinLivingEntityRenderer.java    # 打卡
@@ -619,7 +708,8 @@ src/main/java/dev/yessb/                         (18 个 Java 文件)
     ├── ysm/MixinYsmSlashBladeModule.java # 补空桩的返回值（isSlashBlade / 剑技动画名 / 主动画变体）
     ├── ysm/MixinYsmHeldItemClassifier.java # 补回 slashblade 分类（默认关闭）
     ├── tlm/MixinTlmMaidHeldLayer.java    # 补回女仆手部的拔刀剑分支
-    └── tlm/MixinTlmMaidBackItemLayer.java# 补回女仆背槽的拔刀剑分支
+    ├── tlm/MixinTlmMaidBackItemLayer.java# 补回女仆背槽的拔刀剑分支
+    └── tlm/MixinLivingEntityMaidSwing.java # 补回女仆挥刀（打原版 LivingEntity#swing）
 
 src/main/resources/
 ├── META-INF/neoforge.mods.toml
@@ -652,8 +742,8 @@ icon/                                               # 生成结果：1024 / 512 
 
 | 项目 | 协议 | 本项目的关系 |
 |---|---|---|
-| [SlashBlade:Resharped](https://github.com/Quarkrus/SlashBlade_Resharped) | 代码 MIT / 美术 All Rights Reserved | **不含、不复刻其代码**：仅在运行时调用其公开类（`LayerMainBlade`、`BladeRenderState` 等，编译期依赖、运行时不打包）；不引用、不再分发其任何美术资源 |
-| [车万女仆](https://github.com/TartaricAcid/TouhouLittleMaid) | **MIT**（`Copyright (c) 2019-2024 tartaric_acid, for the code part`） | **移植了其 `SlashBladeRender` 的变换逻辑**（数值原样照抄），按 MIT 要求保留其版权声明；仅调用其公开 API。注意其 MIT **只覆盖 code part**，美术资源不在内 —— 本项目不使用其任何美术资源 |
+| [SlashBlade:Resharped](https://github.com/Quarkrus/SlashBlade_Resharped) | 代码 MIT / 美术 All Rights Reserved | **不含、不复刻其代码**：仅在运行时调用其公开类（`LayerMainBlade`、`BladeRenderState`、`AttackManager#doSlash` 等，编译期依赖、运行时不打包）；不引用、不再分发其任何美术资源 |
+| [车万女仆](https://github.com/TartaricAcid/TouhouLittleMaid) | **MIT**（`Copyright (c) 2019-2024 tartaric_acid, for the code part`） | **复刻了其 `SlashBladeRender` 的变换逻辑与 `SlashBladeCompat#swingSlashBlade` 的行为语义**（数值原样照抄，代码自行编写），按 MIT 要求保留其版权声明；仅调用其公开 API。女仆挥刀那一处**不注入车万女仆**（打的是原版 `LivingEntity#swing`）。注意其 MIT **只覆盖 code part**，美术资源不在内 —— 本项目不使用其任何美术资源 |
 | [Yes Steve Model](https://modrinth.com/mod/yes-steve-model) | 发布版 **All Rights Reserved** | **不复制、不内嵌、不再分发其任何代码或资源**；为定位兼容性问题做过字节码层面的分析；仅在运行时以 Mixin 补返回值，且带版本白名单与 failure-soft。**注意：本项目注入的是 1.21.1 发布版构建，它是混淆的、且没有对应源码** |
 | [Yes Steve Model 公开源码仓库](https://github.com/YesSteveModel/YesSteveModel)（分支 `dev/1.20`） | **Apache-2.0** | **参考了其 `client/compat/slashblade` 的语义**（动画名规则、主动画变体、归一化规则）。**但它是下一代重构版（`3.0-dev` / Forge / 1.20.1），不是本项目注入的那个 2.6.5 构建** —— 只用于语义对照，不替代注入靶点 |
 | [YesSteveModel-Native](https://github.com/YesSteveModel/YesSteveModel-Native) | Apache-2.0 | 仅用于**阅读**其架构以确认"骨骼与渲染的组织方式"，未使用其任何代码 |

@@ -106,6 +106,7 @@ public final class YsmSlashBladeModule {
      * 「如果你修改的拔刀剑动画不起作用，那么先查看这一处是否声明了文件」）。
      */
     public static String animationNameFor(Oo0Oo0O0OoOoO0oooO00O0o0<?> ctx) {
+        noteAsked();
         try {
             LivingEntity entity = livingEntityOf(ctx);
             if (entity == null) {
@@ -128,6 +129,37 @@ public final class YsmSlashBladeModule {
     }
 
     // ------------------------------------------------------------------ 诊断
+
+    private static long lastAskedAt;
+    private static int askedSince;
+
+    /**
+     * 记录"YSM 有没有来问过剑技动画"。
+     *
+     * <p>为什么需要这一条：{@link #diag} 只在拿到<b>非空</b>动画名时才输出，
+     * 所以日志里一条都没有时，有两种完全不同的可能 ——
+     * <ol>
+     *   <li>YSM 压根没走到这个分支（例如被别的模组改了动画解析路径）；</li>
+     *   <li>走过了，但名字算出来是空（超时 / 状态不在注册表 / …）。</li>
+     * </ol>
+     * 这两者的修法完全不同，必须能分开。本条每 2 秒报一次调用次数，
+     * 有调用就说明是第 2 种，其余线索见 {@code SlashBladeBridge} 的
+     * {@code [YES-SB] 剑技动画为空 ⇒ …}。
+     */
+    private static void noteAsked() {
+        if (!FixConfig.debugLog) {
+            return;
+        }
+        askedSince++;
+        long now = System.currentTimeMillis();
+        if (now - lastAskedAt < 2000L) {
+            return;
+        }
+        lastAskedAt = now;
+        YesSlashBladeFix.LOGGER.info("[YES-SB] 剑技动画：最近 2 秒 YSM 询问了 {} 次"
+                + "（为 0 说明 YSM 没走到这条分支；非 0 而上面没有名字，看「剑技动画为空 ⇒」）", askedSince);
+        askedSince = 0;
+    }
 
     private static long lastDiag;
     private static String lastDiagName = "";

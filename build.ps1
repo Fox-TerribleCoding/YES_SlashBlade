@@ -43,7 +43,7 @@ $BuildDir   = Join-Path $ProjectRoot 'build'
 $ClassesDir = Join-Path $BuildDir 'classes'
 $SrcDir     = Join-Path $ProjectRoot 'src\main\java'
 $ResDir     = Join-Path $ProjectRoot 'src\main\resources'
-$JarName    = 'YES_SB-1.0.4.jar'
+$JarName    = 'YES_SB-1.0.8.jar'
 $OutJar     = Join-Path $BuildDir $JarName
 
 if ($Clean -and (Test-Path -LiteralPath $BuildDir)) {
@@ -184,6 +184,41 @@ $javacArgs = @(
 Write-Host "compiling ..."
 & $javac $javacArgs
 if ($LASTEXITCODE -ne 0) { throw "javac failed with exit code $LASTEXITCODE" }
+
+# ---------------------------------------------------------------- BOM guard
+#
+# Reject any shipped file that starts with a UTF-8 BOM (EF BB BF).
+#
+# Why this matters: Windows PowerShell 5.1's `Set-Content -Encoding UTF8` WRITES a
+# BOM. If that happens to neoforge.mods.toml, its first key stops being
+# `modLoader` and becomes `<BOM>modLoader`, and the loader then rejects the whole
+# jar:
+#
+#   Error during pre-loading phase: File mods\YES_SB-x.y.z.jar is not a valid mod file
+#   com.electronwill.nightconfig.core.io.ParsingException: Invalid bare key: 'modLoader'
+#
+# That put the game into a "broken mod state", which in turn surfaced as a
+# completely unrelated-looking crash from another mod (Sodium reported that its
+# config could not be found). This actually happened once - hence the check.
+#
+# Use `[IO.File]::WriteAllText($p, $t, (New-Object Text.UTF8Encoding($false)))`
+# or edit the file with a normal editor; never `Set-Content -Encoding UTF8`.
+$bomOffenders = @()
+foreach ($f in @(Get-ChildItem -Path $SrcDir -Recurse -File) + @(Get-ChildItem -Path $ResDir -Recurse -File)) {
+    try {
+        $bytes = [System.IO.File]::ReadAllBytes($f.FullName)
+    } catch {
+        continue
+    }
+    if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
+        $bomOffenders += $f.FullName
+    }
+}
+if ($bomOffenders.Count -gt 0) {
+    Write-Host "ERROR: these files start with a UTF-8 BOM and would break the jar:" -ForegroundColor Red
+    $bomOffenders | ForEach-Object { Write-Host "  $_" -ForegroundColor Red }
+    throw "UTF-8 BOM found (see the BOM guard comment in this script). Strip the BOM, then rebuild."
+}
 
 # ---------------------------------------------------------------- resources
 Copy-Item -Path (Join-Path $ResDir '*') -Destination $ClassesDir -Recurse -Force

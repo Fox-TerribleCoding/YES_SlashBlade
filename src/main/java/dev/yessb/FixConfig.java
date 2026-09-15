@@ -250,6 +250,20 @@ public final class FixConfig {
      */
     public static boolean maidSlashBlade = true;
 
+    /**
+     * 是否补回女仆的拔刀剑<b>挥刀逻辑</b>（<b>默认开启</b>）。
+     *
+     * <p>这是 TLM 1.21.1 丢掉的第三处（前两处是渲染）：{@code EntityMaid} 在 1.20/1.21 分支里
+     * 覆写了 {@code swing(InteractionHand)} 去调拔刀剑的挥刀兼容，而发布版里<b>连这个覆写都没有</b>。
+     * 于是女仆照常挥刀、照常造成伤害，却<b>没有刀光、刀也不出鞘</b>。
+     *
+     * <p>补回之后有两个副作用，分别属于两侧：
+     * 服务端生成刀光（斩击特效实体，自动同步），客户端写 {@code lastActionTime} 驱动出鞘动作。
+     *
+     * <p>与上一项 {@link #maidSlashBlade}（渲染）<b>分开</b>，便于像第十一轮那样做对照实验。
+     */
+    public static boolean maidSlashBladeAttack = true;
+
     /** 女仆刀的缩放 —— TLM 的 Gecko 路径原值 0.01，按用户要求缩到 **90%** 即 0.009。 */
     public static double maidBladeScale = 0.009D;
 
@@ -320,9 +334,9 @@ public final class FixConfig {
             lastLoadedStamp = stamp;
             if (loaded) {
                 load();
-                YesSlashBladeFix.LOGGER.info("[YES-SB] 配置已热重载：thirdPersonScale={} handBlade={} firstPerson={}({}) scale={} 剑技动画={}",
+                YesSlashBladeFix.LOGGER.info("[YES-SB] 配置已热重载：thirdPersonScale={} handBlade={} firstPerson={}({}) scale={} 剑技动画={} 女仆挥刀={}",
                         thirdPersonScale, handBladeInThirdPerson, firstPersonAsHeldItem, firstPersonMode, firstPersonScale,
-                        slashbladeComboAnimations);
+                        slashbladeComboAnimations, maidSlashBladeAttack);
             }
         } catch (Throwable ignored) {
             // 热重载失败不影响游戏
@@ -342,6 +356,19 @@ public final class FixConfig {
             load();
         } catch (Throwable e) {
             YesSlashBladeFix.LOGGER.warn("[YES-SB] 配置不可用，使用内置默认值: {}", e.toString());
+        }
+        // 记下本次读取时的文件时间戳。
+        //
+        // 不记的话，第一个 tick 的 reloadIfChanged() 会拿 -1 去比真实时间戳，判定为"变了"，
+        // 于是每次启动都会假报一次「配置已热重载」—— 实测确认过（配置文件启动前就存在、未被改动）。
+        // 排查时这种假信号最误导人，所以在这里堵掉。
+        try {
+            Path path = FMLPaths.CONFIGDIR.get().resolve(FILE_NAME);
+            if (Files.exists(path)) {
+                lastLoadedStamp = Files.getLastModifiedTime(path).toMillis();
+            }
+        } catch (Throwable ignored) {
+            // 取不到就算了，最多回到"启动时多打一条"的旧行为
         }
     }
 
@@ -396,6 +423,7 @@ public final class FixConfig {
         handBladeInThirdPerson = read(props, "handBladeInThirdPerson", handBladeInThirdPerson);
         handBladeRequiresNoWaistLayer = read(props, "handBladeRequiresNoWaistLayer", handBladeRequiresNoWaistLayer);
         maidSlashBlade = read(props, "maidSlashBlade", maidSlashBlade);
+        maidSlashBladeAttack = read(props, "maidSlashBladeAttack", maidSlashBladeAttack);
         maidBladeScale = readDouble(props, "maidBladeScale", maidBladeScale);
         maidBladeDrawTicks = readLong(props, "maidBladeDrawTicks", maidBladeDrawTicks);
         maidBladeDrawDistanceFactor = readDouble(props, "maidBladeDrawDistanceFactor", maidBladeDrawDistanceFactor);
@@ -543,6 +571,13 @@ public final class FixConfig {
                 #                    TLM 1.21.1 的发布版丢失了 compat/slashblade 包，
                 #                    连带手部渲染、背槽渲染两处；本项按 TLM 原样补回。
                 #
+                # maidSlashBladeAttack 补回女仆"挥刀"这件事本身（默认 true）。
+                #                    这是发布版丢掉的第三处：TLM 1.20/1.21 分支里
+                #                    EntityMaid 覆写了 swing() 去调拔刀剑的挥刀兼容，
+                #                    发布版里连这个覆写都没有 —— 于是女仆攻击正常、有伤害，
+                #                    但没有刀光（斩击特效），刀也不会出鞘。
+                #                    与 maidSlashBlade（渲染）分开，便于对照排查。
+                #
                 # maidBladeScale     缩放。TLM 原值 0.01，这里取 0.009（原值的 90%）。
                 # maidBladeDrawTicks 动作发生后多少刻之内算"刚出鞘"（TLM 原值 5）。
                 # maidBladeDrawDistanceFactor
@@ -556,7 +591,18 @@ public final class FixConfig {
                 # ysmVersionPrefix   允许靶向注入的 YSM 版本前缀（默认 2.6.）。
                 #                    靶向注入依赖 YSM 的混淆内部结构，版本不匹配时会自动跳过
                 #                    （表现为对应功能不生效，不会崩溃）。
-                # debugLog           打印详细日志（日志有节流，不会刷屏）
+                # debugLog           排查开关（默认 false，关闭时开销为零）。
+                #                    ⚠️ 报 bug 时请开一次，把日志里所有 [YES-SB] 开头的行附上 ——
+                #                    本模组做的多是"补一层被掐掉的渲染、补一个恒为假的返回值"
+                #                    这类**看不见就等于没干活**的事，没有这些行很难定位。
+                #
+                #                    开启后会打印（都已经过节流，不会刷屏）：
+                #                      · 各处失败与早退的原因（例如"剑技动画为空 ⇒ 超时/模型缺这条"）
+                #                      · 第一人称"刀在不在画面里"的视野判定（调 firstPersonOffset* 用）
+                #                      · 腰挂层补偿的实体与位移（调 waistOffset* 用）
+                #                      · 女仆挥砍在**服务端 / 客户端**两侧各自的结果
+                #                        （两侧都应当出现；客户端那条"刀光=未生成"是正常的）
+                #                      · 女仆刀何时出鞘（只在"出鞘"那一次打一条）
                 enabled=true
                 affectsPlayers=true
                 affectsOtherLivingEntities=true
@@ -606,6 +652,7 @@ public final class FixConfig {
 
                 # 五、车万女仆
                 maidSlashBlade=true
+                maidSlashBladeAttack=true
                 maidBladeScale=0.009
                 maidBladeDrawTicks=5
                 maidBladeDrawDistanceFactor=0.007
