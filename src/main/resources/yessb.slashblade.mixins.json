@@ -4,7 +4,8 @@
   "package": "dev.yessb.mixin.sb",
   "compatibilityLevel": "JAVA_21",
   "client": [
-    "MixinSlashBladeTEISR"
+    "MixinSlashBladeTEISR",
+    "MixinBladeFirstPersonRender"
   ],
   "injectors": {
     "defaultRequire": 0

@@ -73,6 +73,24 @@ public final class FixConfig {
     public static String firstPersonMode = "auto";
 
     /**
+     * 第一人称刀的姿态<b>基准</b>：
+     * <ul>
+     *   <li>{@code camera-view} —— <b>默认（已实测通过）</b>。基准取
+     *       {@code ModelViewMat⁻¹ × 相机旋转}。无光影时两矩阵相等 ⇒ 该式 = 单位矩阵
+     *       ⇒ <b>与拔刀剑原行为逐位相同</b>；开光影时 Iris 把 {@code ModelViewMat}
+     *       换成了"视角摇晃矩阵"，该式正好把多出来的那层抵消掉，于是有/无光影表现一致。
+     *       代码里还有一道保险：先比较两者，相等就直接清零。</li>
+     *   <li>{@code identity} —— 拔刀剑原本的写法（把姿态矩阵清零）。
+     *       无光影下正确；<b>开光影时刀会跑到别处并随移动漂移</b>（这正是本项要修的问题）。</li>
+     *   <li>{@code modelview} —— <b>仅供对照</b>：直接取 {@code ModelViewMat⁻¹}。
+     *       已实测在<b>无光影</b>下会把相机旋转也一起抵掉，表现是"刀不再跟着视角"。</li>
+     * </ul>
+     *
+     * <p>背景见 {@code dev.yessb.render.FirstPersonPoseBase} 的类注释。
+     */
+    public static String firstPersonPoseBase = "camera-view";
+
+    /**
      * 手持刀（第三方称主手 / 平面上下文）的缩放。
      *
      * <h2>这个数从哪来</h2>
@@ -154,9 +172,15 @@ public final class FixConfig {
      *
      * <p>用途：补偿变换是照原版 {@code LivingEntityRenderer} 的环境复刻的，
      * 而 YSM 模型的原点/比例不一定与它一致 ——「刀太低、没接到手上」就调这里。
+     *
+     * <p><b>默认值来自实测标定</b>：YSM 模型（内置默认模型与各模型包都一样）渲染出来
+     * 比原版玩家模型矮，于是按原版比例算出来的腰挂点整体偏低，表现是"刀挂在大腿外侧"。
+     * 实测在 {@code waistOffsetY = 0.2} 处对齐到腰侧。因为这是**固定下沉**
+     * （所有模型包一致），所以一个常数就能收敛，不需要按模型包配表。
+     * 若你用的模型包比例特殊，改这一个数即可（热重载）。
      */
     public static double waistOffsetX = 0.0D;
-    public static double waistOffsetY = 0.0D;
+    public static double waistOffsetY = 0.2D;
     public static double waistOffsetZ = 0.0D;
 
     /**
@@ -334,9 +358,9 @@ public final class FixConfig {
             lastLoadedStamp = stamp;
             if (loaded) {
                 load();
-                YesSlashBladeFix.LOGGER.info("[YES-SB] 配置已热重载：thirdPersonScale={} handBlade={} firstPerson={}({}) scale={} 剑技动画={} 女仆挥刀={}",
-                        thirdPersonScale, handBladeInThirdPerson, firstPersonAsHeldItem, firstPersonMode, firstPersonScale,
-                        slashbladeComboAnimations, maidSlashBladeAttack);
+                YesSlashBladeFix.LOGGER.info("[YES-SB] 配置已热重载：thirdPersonScale={} handBlade={} firstPerson={}({}) 基准={} scale={} 剑技动画={} 女仆挥刀={}",
+                        thirdPersonScale, handBladeInThirdPerson, firstPersonAsHeldItem, firstPersonMode, firstPersonPoseBase,
+                        firstPersonScale, slashbladeComboAnimations, maidSlashBladeAttack);
             }
         } catch (Throwable ignored) {
             // 热重载失败不影响游戏
@@ -392,6 +416,7 @@ public final class FixConfig {
         thirdPersonScale = readDouble(props, "thirdPersonScale", thirdPersonScale);
         firstPersonAsHeldItem = read(props, "firstPersonAsHeldItem", firstPersonAsHeldItem);
         firstPersonMode = props.getProperty("firstPersonMode", firstPersonMode).trim();
+        firstPersonPoseBase = props.getProperty("firstPersonPoseBase", firstPersonPoseBase).trim();
         firstPersonScale = readDouble(props, "firstPersonScale", firstPersonScale);
         handBladeScale = readDouble(props, "handBladeScale", handBladeScale);
         flatBladeScale = readDouble(props, "flatBladeScale", flatBladeScale);
@@ -495,6 +520,10 @@ public final class FixConfig {
                 # waistOffsetX/Y/Z    腰挂层补偿的额外位移（方块，正数 = 向上/向前）。
                 #                     用于吸收"YSM 模型原点/比例与原版不同"造成的固定偏移，
                 #                     例如玩家的刀整体偏低。
+                #                     默认 waistOffsetY=0.2 是实测标定值：YSM 模型（内置与
+                #                     各模型包一致）比原版玩家模型矮，按原版比例算出来的腰挂点
+                #                     整体偏低（刀挂在大腿外侧），0.2 格正好回到腰侧。
+                #                     因为是固定下沉，一个常数即可，不需要按模型包配表。
                 #
                 # refreshModelPose    补画腰刀前先把原版模型姿态补算一遍（默认 true）。
                 #                     YSM 掐掉原版渲染时连带 model.setupAnim(...) 也没跑，
@@ -566,6 +595,25 @@ public final class FixConfig {
                 # firstPersonRotX/Y/Z    朝向角度
                 # firstPersonOffsetX/Y/Z 位移（方块，最外层世界位移）
                 #
+                # firstPersonPoseBase    第一人称刀的姿态基准（默认 camera-view，一般不用改）
+                #     一个顶点最终的变换是「ModelViewMat × 姿态栈」。拔刀剑会把姿态栈清零，
+                #     而无光影下 ModelViewMat 恰好等于"相机旋转"（GameRenderer 里就是
+                #     new Matrix4f().rotation(camera.rotation().conjugate())），
+                #     所以清零之后刀能跟着视角 —— 这是它一直以来的正确行为。
+                #     开光影后 Iris 把 ModelViewMat 换成了"视角摇晃矩阵"（不含相机旋转），
+                #     清零就少了一层、多了一层摇晃 ⇒ 刀跑到别处、随移动漂移。
+                #
+                #     camera-view = 基准取 ModelViewMat⁻¹ × 相机旋转（默认，已实测通过）。
+                #                   无光影时该式 = 单位矩阵（与拔刀剑原行为逐位相同），
+                #                   光影下正好把多出来的摇晃抵消掉。
+                #                   代码里还会先比较两者，相等就直接清零，属结构性保证。
+                #     identity    = 拔刀剑原行为：无光影正确，光影下有问题。
+                #     modelview   = 仅供对照，正常不要用（无光影下会把相机旋转也抵掉）。
+                #
+                #     诊断：开 debugLog 后每 2 秒一行
+                #       「第一人称[基准]：采用=… ModelView=… 像相机旋转=是/★否 入口姿态=…」
+                #     开/关光影各看一次即可判定。
+                #
                 # ==================== 五、车万女仆 ====================
                 # maidSlashBlade     补回女仆手里与背上的那把拔刀剑（默认 true）。
                 #                    TLM 1.21.1 的发布版丢失了 compat/slashblade 包，
@@ -611,7 +659,7 @@ public final class FixConfig {
                 restoreThirdPerson=true
                 thirdPersonScale=0.7
                 waistOffsetX=0
-                waistOffsetY=0
+                waistOffsetY=0.2
                 waistOffsetZ=0
                 refreshModelPose=true
 
@@ -642,6 +690,7 @@ public final class FixConfig {
                 # 四、第一人称
                 firstPersonAsHeldItem=true
                 firstPersonMode=auto
+                firstPersonPoseBase=modelview
                 firstPersonScale=0.0062
                 firstPersonRotX=0
                 firstPersonRotY=0

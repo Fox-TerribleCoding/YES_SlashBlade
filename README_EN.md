@@ -44,7 +44,7 @@ it never crashes. Nothing happens at all without YSM
 
 ## 2. Installation
 
-Drop `YES_SB-1.0.8.jar` into `.minecraft/mods/`
+Drop `YES_SB-1.0.12.jar` into `.minecraft/mods/`
 (or `versions/<name>/mods/` when using version isolation).
 
 ## 3. Root causes (why the fix looks like this)
@@ -134,6 +134,17 @@ The full Chinese configuration reference — every key, one row each — is in
 
 ## 6. Known limitations
 
+- **First-person blade with shaders (fixed in 1.0.12).** With *any* shader pack enabled,
+  the first-person blade used to land in the wrong place and drift as you walked.
+  The cause is the pose *basis*: a vertex ends up as `ModelViewMat × poseStack`, and without
+  shaders `ModelViewMat` equals the camera rotation while the pose stack starts at its inverse.
+  SlashBlade's first-person renderer clears the pose stack (`pose().identity()`), which leaves
+  exactly that camera rotation — and that is what makes the blade follow your view.
+  Iris replaces `ModelViewMat` with its own view-bob matrix, so clearing the pose leaves the
+  *bobbing* instead. The fix uses `ModelViewMat⁻¹ × camera rotation` as the basis, which is the
+  identity when no shader is active — so the unshaded behaviour is bit-identical.
+  It does **not** detect shader packs, so it holds for any of them.
+  (Aside: the "sway" seen with shaders *was* the bug — the hand's view-bob leaking onto the blade.)
 - **The player's blade does not track YSM's animation (unresolved).** The blade is positioned
   from the *vanilla* player model parts, while the character on screen is a *YSM* model playing
   *YSM* animations. Two animation systems, so they cannot agree. Fixing it properly requires
@@ -163,7 +174,7 @@ The full Chinese configuration reference — every key, one row each — is in
 | YSM | `ysm-2.6.5-neoforge+mc1.21.1-release.jar` | 63,463,229 B | `B285C73D4EC010D9` |
 | SlashBlade: Resharped | `SlashBladeResharped-2.0.7-1.21.1.jar` | 3,886,797 B | `C67653EC0D7E08A7` |
 | Touhou Little Maid | `touhoulittlemaid-1.5.3-neoforge+mc1.21.1.jar` | 24,408,776 B | `F6DB04195820C850` |
-| This mod | `YES_SB-1.0.8.jar` | 138,556 B | `FA3BA44DBB685339` |
+| This mod | `YES_SB-1.0.12.jar` | 143,301 B | `D5438A659FC05D6B` |
 
 > This mod's jar entries carry **build timestamps**, so its hash changes on every rebuild
 > even with identical sources — it identifies one specific build, not a constant.
