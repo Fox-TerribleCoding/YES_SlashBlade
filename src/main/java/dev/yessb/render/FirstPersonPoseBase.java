@@ -54,6 +54,10 @@ import org.joml.Quaternionf;
  * 这样"无光影下零改动"是<b>结构性保证</b>，不依赖等式成立。
  *
  * <p>本修正<b>不检测光影包、不判断光影种类</b>，对任何光影同样成立。
+ *
+ * <p>此外，视角摇晃（{@link FirstPersonBob}）会被<b>乘在这个基准之后</b>：
+ * {@code 姿态栈 := ModelViewMat⁻¹ × 相机旋转 × 摇晃}。两者合起来的结果在有/无光影下同样一致，
+ * 理由与上面同源 —— 化简后都是 {@code 相机旋转 × 摇晃 × 刀变换}。
  */
 public final class FirstPersonPoseBase {
 
@@ -65,6 +69,61 @@ public final class FirstPersonPoseBase {
 
     /** 自检日志只报一次。 */
     private static volatile boolean aliveNoted;
+
+    /** "已停用 Iris 近似补偿"这条日志只报一次。 */
+    private static boolean irisHackNoted;
+
+    /**
+     * 该不该把"装了 iris"这件事<b>对拔刀剑隐瞒掉</b>（从而让它的"Iris 近似补偿"永不执行）。
+     *
+     * <p>那段补偿（见 {@code MixinBladeFirstPersonRenderIrisFlag} 的类注释）是作者拿
+     * {@code yaw / pitch} 去近似 {@code ModelViewMat⁻¹} 的权宜之计。本模组自 1.0.12 起已经
+     * <b>精确</b>处理了 {@code ModelViewMat}，留着它只会：
+     * <ul>
+     *   <li>把偏航整个抵消（{@code R_y(yaw+180) · R_y(180−yaw) = 360°}）
+     *       ⇒ 开光影时第一人称的刀<b>水平方向被锁定</b>；</li>
+     *   <li>多加一层俯仰（{@code R_x(+xRot)} 与 {@code R_x(−clamp)} 不抵消）
+     *       ⇒ <b>竖直方向随视角反着动</b>。</li>
+     * </ul>
+     *
+     * <p>{@code firstPersonIrisHack}：{@code auto}（默认）/ {@code ignore} / {@code keep}。
+     * {@code auto} 只在<b>本模组确实接管了姿态基准</b>时才停用它；
+     * 若把 {@code firstPersonPoseBase} 设成 {@code identity}（= 回到拔刀剑原行为），
+     * 那段近似就仍是作者原本的补偿，保留不动。
+     */
+    public static boolean shouldIgnoreSlashBladeIrisHack() {
+        try {
+            if (!FixConfig.enabled) {
+                return false;
+            }
+            String mode = FixConfig.firstPersonIrisHack;
+            if ("keep".equalsIgnoreCase(mode)) {
+                return false;
+            }
+            if ("ignore".equalsIgnoreCase(mode)) {
+                return true;
+            }
+            return !"identity".equalsIgnoreCase(FixConfig.firstPersonPoseBase);
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /**
+     * 诊断：只在第一次真的停用时打一条 —— 与其它自检行同一思路，
+     * 回答"这个停用到底有没有生效"。
+     */
+    public static void noteIrisHackIgnored(String modId) {
+        if (irisHackNoted) {
+            return;
+        }
+        irisHackNoted = true;
+        YesSlashBladeFix.LOGGER.info(
+                "[YES-SB] 已对拔刀剑隐瞒「{} 已加载」，从而停用它的 Iris 近似补偿"
+                        + "（本模组的姿态基准已精确处理 ModelViewMat；留着它会把偏航抵消掉、并多加一层俯仰）。"
+                        + "开关 firstPersonIrisHack={}",
+                modId, FixConfig.firstPersonIrisHack);
+    }
 
     /** 混入"还活着"的自检 —— 用来回答"这次实测跑的到底是不是修好的那份"。 */
     public static void noteAlive() {
@@ -135,10 +194,17 @@ public final class FirstPersonPoseBase {
                 pendingEntry = new Matrix4f(self);
             }
             Matrix4f base = base(true);
-            if (base == null) {
+            // 视角摇晃（见 FirstPersonBob）：乘在基准之后，效果是"整把刀随视角摇"。
+            // 无光影时 base 为 null（表示按原样清零），此时基准就是单位矩阵，摇晃照常乘上去。
+            Matrix4f bob = FirstPersonBob.matrix();
+            if (base == null && bob == null) {
                 return self.identity();
             }
-            self.set(base);
+            Matrix4f result = base != null ? base : new Matrix4f();
+            if (bob != null) {
+                result.mul(bob);
+            }
+            self.set(result);
             return self;
         } catch (Throwable t) {
             // 任何意外都退回拔刀剑原行为，绝不让第一人称没有刀

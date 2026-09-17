@@ -14,6 +14,7 @@ import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.world.entity.HumanoidArm;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.item.ItemStack;
+import org.joml.Quaternionf;
 
 import java.util.List;
 
@@ -74,6 +75,11 @@ public final class TlmMaidBridge {
         if (!FixConfig.enabled || !FixConfig.maidSlashBlade || maid == null || model == null) {
             return false;
         }
+        // 只查 ModList：下面那句在 SlashBladeBridge 里，而那个类引用了拔刀剑的类型，
+        // 拔刀剑缺席时加载它会抛 NoClassDefFoundError（与 1.0.13 的崩溃同类，见 ModPresence）。
+        if (!ModPresence.hasSlashBlade()) {
+            return false;
+        }
         if (!SlashBladeBridge.isBlade(stack)) {
             return false;
         }
@@ -112,6 +118,11 @@ public final class TlmMaidBridge {
                                           HumanoidArm arm, PoseStack poseStack, MultiBufferSource buffer,
                                           int light, float partialTicks) {
         try {
+            // 本方法只在 handles() 返回 true 之后被调用，但这里再查一次 ModList 兜底：
+            // 一旦哪天调用顺序变了，也不会去加载引用了拔刀剑类型的 SlashBladeBridge。
+            if (!ModPresence.hasSlashBlade()) {
+                return false;
+            }
             boolean offhand = arm == HumanoidArm.LEFT;
 
             poseStack.pushPose();
@@ -143,14 +154,39 @@ public final class TlmMaidBridge {
                     // 主手这条有"刚出鞘"的姿态；副手那条 TLM 是鞘 + 刀身一起画的，没有这一段
                     long elapsed = SlashBladeBridge.ticksSinceLastAction(maid, stack);
                     boolean drawn = elapsed >= 0L && elapsed < FixConfig.maidBladeDrawTicks;
+                    // 「出鞘姿态」与「收在鞘里」之间的权重。
+                    //
+                    // TLM 原实现是**二值**的：窗口内整套加满、窗口一过整段消失
+                    // ⇒ 进出各"啪"地跳一下（上游就是在 5 刻里恒速自转一下当动作，见源码）。
+                    // 这里在窗口两端各留一小段缓动（maidBladeEaseTicks，默认 1 刻 = 50ms），
+                    // 把跳变抹掉；**窗口中段 w = 1，与原实现逐位相同**（见下面的分支）。
+                    // 设 maidBladeEaseTicks=0 即完全回到 TLM 原样。
+                    float i = elapsed + partialTicks;
+                    float w = 0.0F;
                     if (drawn) {
-                        float i = elapsed + partialTicks;
+                        w = 1.0F;
+                        float ease = (float) FixConfig.maidBladeEaseTicks;
+                        if (ease > 0.0F) {
+                            w = Math.min(1.0F, i / ease);                                     // 入
+                            w = Math.min(w, (FixConfig.maidBladeDrawTicks - i) / ease);       // 出
+                            w = Math.max(0.0F, w);
+                        }
+                    }
+                    if (w > 0.0F) {
                         // 分母为什么是 0.007：TLM 原代码照抄自 Bedrock 那条（缩放 0.007），
                         // 而 Gecko 这条的缩放是 0.01。属于上游的既成行为，为对齐手感原样保留。
                         poseStack.translate(0.0D, 0.0D,
-                                -0.5D / FixConfig.maidBladeDrawDistanceFactor);
-                        poseStack.mulPose(Axis.YP.rotationDegrees(60.0F + i * 48.0F));
-                        poseStack.mulPose(Axis.XP.rotationDegrees(90.0F));
+                                -0.5D / FixConfig.maidBladeDrawDistanceFactor * w);
+                        Quaternionf pose = new Quaternionf()
+                                .rotateY((float) Math.toRadians(60.0F + i * 48.0F))
+                                .rotateX((float) Math.toRadians(90.0F));
+                        if (w >= 1.0F) {
+                            // 窗口正中：原样施加，保证"只改了进出两端"
+                            poseStack.mulPose(pose);
+                        } else {
+                            // 两端：从"收鞘"的姿态球面插值到出鞘姿态
+                            poseStack.mulPose(new Quaternionf().slerp(pose, w));
+                        }
                     }
                     // 只在"是否出鞘"翻转时打一条：这是唯一能证明
                     // 「客户端那份时间戳真的写进去了」的观测点（见 §12 的分析）。
@@ -185,7 +221,14 @@ public final class TlmMaidBridge {
      */
     public static boolean renderMaidBackBlade(ItemStack stack, PoseStack poseStack, MultiBufferSource buffer,
                                               int light) {
-        if (!FixConfig.enabled || !FixConfig.maidSlashBlade || !SlashBladeBridge.isBlade(stack)) {
+        if (!FixConfig.enabled || !FixConfig.maidSlashBlade) {
+            return false;
+        }
+        // 同 handles：先查 ModList，别在拔刀剑缺席时加载 SlashBladeBridge。
+        if (!ModPresence.hasSlashBlade()) {
+            return false;
+        }
+        if (!SlashBladeBridge.isBlade(stack)) {
             return false;
         }
         try {
@@ -232,6 +275,30 @@ public final class TlmMaidBridge {
             return task != null && TaskAttack.UID.equals(task.getUid());
         } catch (Throwable t) {
             return false;
+        }
+    }
+
+    // ------------------------------------------------------------------ 诊断
+
+    /**
+     * 把这只女仆当前的任务 UID 读成字符串（只给日志用）。
+     *
+     * <p>读不到时返回 {@code ?(读取失败)} —— 刻意与"读到但不是攻击任务"区分开：
+     * 前者是"没读出来"，后者是"读出来了但不对"，日志里必须分得清
+     * （第十一轮的教训：早退分支静默 ⇒ "没生效"和"判定不通过"长得一模一样）。
+     *
+     * <p>本方法可以安全地引用 TLM 的类型：调用方只在<b>确认实体是女仆之后</b>才会走到这里，
+     * 而"存在女仆"本身就意味着 TLM 已加载。
+     */
+    public static String describeTask(LivingEntity maid) {
+        try {
+            if (!(maid instanceof EntityMaid m)) {
+                return "?";
+            }
+            IMaidTask task = m.getTask();
+            return task != null ? String.valueOf(task.getUid()) : "?";
+        } catch (Throwable t) {
+            return "?(读取失败)";
         }
     }
 

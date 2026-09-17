@@ -1,6 +1,5 @@
 package dev.yessb.compat;
 
-import com.github.tartaricacid.touhoulittlemaid.entity.passive.EntityMaid;
 import dev.yessb.FixConfig;
 import dev.yessb.YesSlashBladeFix;
 import net.minecraft.world.InteractionHand;
@@ -79,7 +78,15 @@ public final class TlmMaidCombatBridge {
             if (!FixConfig.enabled || !FixConfig.maidSlashBladeAttack) {
                 return;
             }
-            if (!(entity instanceof EntityMaid maid)) {
+            // ⚠️ 第一道闸必须是"有没有装 TLM"，且只能用 ModList 查 ——
+            // 本类**一行都不能引用 TLM 的类型**，否则没装 TLM 的整合包里，
+            // 本类在链接/校验阶段就会抛 NoClassDefFoundError（try 都进不去）。
+            // 1.0.13 在 ATM10 上的崩溃就是这个原因，详见 ModPresence 的类注释。
+            if (!ModPresence.hasTlm()) {
+                return;
+            }
+            LivingEntity maid = entity;
+            if (!ModPresence.isMaid(maid)) {
                 // 打的是原版 LivingEntity，所以每只生物挥刀都会经过这里；先做最便宜的判定。
                 // 这一条刻意完全静默：它会被每只怪、每次左键打到，打日志没有意义。
                 return;
@@ -90,7 +97,9 @@ public final class TlmMaidCombatBridge {
                 report(maid, hand, "让路（上游已自己声明 swing 覆写）", false, false);
                 return;
             }
-            if (!SlashBladeBridge.isAvailable()) {
+            // 同样只查 ModList：拔刀剑缺席时不能去碰 SlashBladeBridge（那会加载它，
+            // 而它的字段/局部变量里有拔刀剑的类型，属于同一类隐患）。
+            if (!ModPresence.hasSlashBlade()) {
                 report(maid, hand, "跳过（拔刀剑未安装）", false, false);
                 return;
             }
@@ -205,14 +214,14 @@ public final class TlmMaidCombatBridge {
         }
     }
 
-    /** 连实体都还不是女仆时的兜底留痕（异常路径用），不依赖 maid 类型。 */
+    /** 连实体都还不是女仆时的兜底留痕（异常路径用），不依赖任何 TLM 类型。 */
     private static void reportQuietly(LivingEntity entity, InteractionHand hand, String what) {
         if (!FixConfig.debugLog) {
             return;
         }
         try {
-            if (entity instanceof EntityMaid maid) {
-                report(maid, hand, what, false, false);
+            if (ModPresence.isMaid(entity)) {
+                report(entity, hand, what, false, false);
             } else {
                 YesSlashBladeFix.LOGGER.info("[YES-SB] 女仆挥砍：侧={} 结果={}（非女仆）",
                         entity != null && entity.level().isClientSide() ? "客户端" : "服务端", what);
@@ -221,12 +230,13 @@ public final class TlmMaidCombatBridge {
         }
     }
 
+    /**
+     * 把当前任务名读出来给日志用。
+     *
+     * <p>真正的读取放在 {@link TlmMaidBridge} 里 —— 那里可以正大光明地引用 TLM 的类型，
+     * 因为**只有确认是女仆之后**才会走到这里（而女仆存在就说明 TLM 装了）。
+     */
     private static String taskName(LivingEntity maid) {
-        try {
-            return maid instanceof EntityMaid m && m.getTask() != null ? String.valueOf(m.getTask().getUid()) : "?";
-        } catch (Throwable t) {
-            // 读不到任务（例如客户端还没同步到）会走到这里 —— 用问号留下痕迹，别装作没事
-            return "?(读取失败)";
-        }
+        return TlmMaidBridge.describeTask(maid);
     }
 }

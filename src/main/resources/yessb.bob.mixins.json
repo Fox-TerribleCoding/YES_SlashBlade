@@ -1,12 +1,10 @@
 {
   "required": false,
   "minVersion": "0.8",
-  "package": "dev.yessb.mixin.sb",
+  "package": "dev.yessb.mixin.bob",
   "compatibilityLevel": "JAVA_21",
   "client": [
-    "MixinSlashBladeTEISR",
-    "MixinBladeFirstPersonRender",
-    "MixinBladeFirstPersonRenderIrisFlag"
+    "MixinGameRendererBob"
   ],
   "injectors": {
     "defaultRequire": 0

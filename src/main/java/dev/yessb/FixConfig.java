@@ -91,6 +91,39 @@ public final class FixConfig {
     public static String firstPersonPoseBase = "camera-view";
 
     /**
+     * 第一人称的刀是否跟随<b>视角摇晃</b>（<b>默认开启</b>）。
+     *
+     * <p>原版第一人称的手会随脚步摇晃，而拔刀剑的第一人称渲染把姿态栈清零了 ——
+     * 摇晃正刻在被抹掉的那份矩阵里，于是"手在晃、刀不晃"。打开本项后，
+     * 刀会与手<b>同步</b>摇晃（直接调用原版 {@code GameRenderer#bobView}，逐像素一致）。
+     *
+     * <p>门控绑定游戏内置的「视角摇晃」开关：玩家关掉它，刀也不晃。
+     *
+     * <p><b>注意：1.20.1 的第一人称刀是不晃的</b>（它同样清零了姿态栈）。
+     * 所以这是本模组<b>有意添加的增强</b>，不是"还原 1.20.1"；不需要就设 {@code false}。
+     */
+    public static boolean firstPersonBladeBob = true;
+
+    /**
+     * 拔刀剑自带的「Iris 近似补偿」怎么处理：{@code auto}（默认）/ {@code ignore} / {@code keep}。
+     *
+     * <p>2.0.7 的 {@code BladeFirstPersonRender} 在"检测到 Iris 且正在用光影"时会额外施加
+     * 两次旋转，用来<b>近似</b>抵消 Iris 塞进 {@code ModelViewMat} 的那层矩阵。
+     * 而本模组自 1.0.12 起已经<b>精确</b>处理了 {@code ModelViewMat}，于是那段近似变成纯错误：
+     * <ul>
+     *   <li>{@code R_y(yaw+180) · R_y(180−yaw) = 360°} ⇒ <b>偏航被整个抵消</b>：
+     *       开光影时第一人称的刀<b>水平方向被锁定、不随视角转</b>；</li>
+     *   <li>{@code R_x(+xRot)} 与 {@code R_x(−clamp)} 不抵消 ⇒ 多一层俯仰：
+     *       <b>竖直方向随视角反着动</b>。</li>
+     * </ul>
+     *
+     * <p>{@code auto}（默认）只在<b>本模组确实接管了姿态基准</b>（{@code firstPersonPoseBase}
+     * 不是 {@code identity}）时才停用它；{@code keep} 保留原样（做 A/B 对照用）。
+     * 实现方式见 {@code MixinBladeFirstPersonRenderIrisFlag}（对拔刀剑隐瞒"iris 已加载"）。
+     */
+    public static String firstPersonIrisHack = "auto";
+
+    /**
      * 手持刀（第三方称主手 / 平面上下文）的缩放。
      *
      * <h2>这个数从哪来</h2>
@@ -298,6 +331,20 @@ public final class FixConfig {
     public static double maidBladeDrawDistanceFactor = 0.007D;
 
     /**
+     * 女仆"出鞘/收鞘"两端的缓动长度（刻，**默认 1 刻 = 50 ms**）。
+     *
+     * <p>TLM 原实现是<b>二值</b>的：窗口内整套出鞘变换加满、窗口一过整段消失
+     * ⇒ 进出各"啪"地跳一下。这里在窗口两端各留一小段把跳变抹掉。
+     *
+     * <p><b>窗口中段仍是原样</b>（权重 = 1，逐位相同），所以只是"把两头磨圆"，
+     * 不改变上游那段恒速自转本身。设 {@code 0} 即完全回到 TLM 原样。
+     *
+     * <p>⚠️ 这是本模组<b>有意添加的打磨</b>（TLM 并没有这个缓动），
+     * 属于"偏离参照版本"——想严格对齐参照就设 0。
+     */
+    public static double maidBladeEaseTicks = 1.0D;
+
+    /**
      * 女仆刀的额外位移与朝向（在 TLM 那套变换之后叠加）。
      *
      * <p>TLM 的变换是挂在<b>女仆模型自己的定位组骨骼</b>上的；如果女仆实际是由 YSM 用
@@ -417,6 +464,8 @@ public final class FixConfig {
         firstPersonAsHeldItem = read(props, "firstPersonAsHeldItem", firstPersonAsHeldItem);
         firstPersonMode = props.getProperty("firstPersonMode", firstPersonMode).trim();
         firstPersonPoseBase = props.getProperty("firstPersonPoseBase", firstPersonPoseBase).trim();
+        firstPersonBladeBob = read(props, "firstPersonBladeBob", firstPersonBladeBob);
+        firstPersonIrisHack = props.getProperty("firstPersonIrisHack", firstPersonIrisHack).trim();
         firstPersonScale = readDouble(props, "firstPersonScale", firstPersonScale);
         handBladeScale = readDouble(props, "handBladeScale", handBladeScale);
         flatBladeScale = readDouble(props, "flatBladeScale", flatBladeScale);
@@ -452,6 +501,7 @@ public final class FixConfig {
         maidBladeScale = readDouble(props, "maidBladeScale", maidBladeScale);
         maidBladeDrawTicks = readLong(props, "maidBladeDrawTicks", maidBladeDrawTicks);
         maidBladeDrawDistanceFactor = readDouble(props, "maidBladeDrawDistanceFactor", maidBladeDrawDistanceFactor);
+        maidBladeEaseTicks = readDouble(props, "maidBladeEaseTicks", maidBladeEaseTicks);
         maidBladeOffsetX = readDouble(props, "maidBladeOffsetX", maidBladeOffsetX);
         maidBladeOffsetY = readDouble(props, "maidBladeOffsetY", maidBladeOffsetY);
         maidBladeOffsetZ = readDouble(props, "maidBladeOffsetZ", maidBladeOffsetZ);
@@ -630,6 +680,11 @@ public final class FixConfig {
                 # maidBladeDrawTicks 动作发生后多少刻之内算"刚出鞘"（TLM 原值 5）。
                 # maidBladeDrawDistanceFactor
                 #                    出鞘那一下位移的分母（TLM 原值 0.007）。
+                # maidBladeEaseTicks 女仆"出鞘/收鞘"两端的缓动长度（刻，默认 1 = 50ms）。
+                #                    TLM 原实现是二值的：窗口内加满、窗口一过整段消失
+                #                    ⇒ 进出各"啪"地跳一下。这里在两端各留一小段把跳变抹掉，
+                #                    **窗口中段仍是原样**（权重=1，逐位相同）。设 0 = 完全回到 TLM 原样。
+                #                    ⚠️ 这是本模组有意添加的打磨（偏离参照），想严格对齐参照就设 0。
                 #
                 # maidBladeOffsetX/Y/Z、maidBladeRotX/Y/Z
                 #                    额外位移（方块）与朝向（角度），叠加在 TLM 那套变换之后。
@@ -690,7 +745,27 @@ public final class FixConfig {
                 # 四、第一人称
                 firstPersonAsHeldItem=true
                 firstPersonMode=auto
-                firstPersonPoseBase=modelview
+                firstPersonPoseBase=camera-view
+                # firstPersonBladeBob    第一人称的刀是否跟随「视角摇晃」（默认 true）。
+                #                     原版第一人称的手会随脚步摇晃，而拔刀剑清零了姿态栈 ——
+                #                     摇晃正刻在被抹掉的那份矩阵里，于是"手在晃、刀不晃"。
+                #                     打开后刀与手同步摇晃（直接调用原版 bobView，逐像素一致），
+                #                     并且**跟随游戏内置的「视角摇晃」开关**：关掉它刀也不晃。
+                #                     ⚠️ 1.20.1 的第一人称刀是不晃的，所以这是**有意添加的增强**，
+                #                        不是"还原 1.20.1"；不需要就设 false。
+                firstPersonBladeBob=true
+                # firstPersonIrisHack     拔刀剑自带的「Iris 近似补偿」怎么处理（默认 auto）。
+                #                     2.0.7 在"检测到 Iris 且正在用光影"时会额外施加两次旋转，
+                #                     用来近似抵消 Iris 塞进 ModelViewMat 的那层矩阵；而本模组
+                #                     自 1.0.12 起已精确处理 ModelViewMat，那段近似就变成了纯错误：
+                #                       · 偏航被整个抵消 ⇒ 开光影时刀**水平方向被锁定、不随视角转**
+                #                       · 多加一层俯仰   ⇒ **竖直方向随视角反着动**
+                #                     auto   = 本模组接管姿态基准时停用它（默认）
+                #                     keep   = 保留原样（做 A/B 对照用）
+                #                     ignore = 一律停用
+                #                     ⚠️ 这一项**需要重启游戏**才生效（拔刀剑在首次构造时读一次该字段），
+                #                        与本模组其它"存盘 2 秒生效"的开关不同。
+                firstPersonIrisHack=auto
                 firstPersonScale=0.0062
                 firstPersonRotX=0
                 firstPersonRotY=0
@@ -705,6 +780,7 @@ public final class FixConfig {
                 maidBladeScale=0.009
                 maidBladeDrawTicks=5
                 maidBladeDrawDistanceFactor=0.007
+                maidBladeEaseTicks=1.0
                 maidBladeOffsetX=0
                 maidBladeOffsetY=0
                 maidBladeOffsetZ=0

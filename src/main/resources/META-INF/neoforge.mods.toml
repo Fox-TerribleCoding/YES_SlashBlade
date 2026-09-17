@@ -6,7 +6,7 @@ displayURL="https://github.com/Fox-TerribleCoding/YES_SlashBlade"
 
 [[mods]]
     modId="yes_sb"
-    version="1.0.12"
+    version="1.0.16"
     displayName="Yes Steve Model x SlashBlade Fix (YES-SB)"
     authors="YES-SB"
     logoFile="icon.png"
@@ -33,6 +33,12 @@ displayURL="https://github.com/Fox-TerribleCoding/YES_SlashBlade"
 
 [[mixins]]
     config="yessb.slashblade.mixins.json"
+
+# 单独一个配置：借原版 GameRenderer#bobView 用的 @Invoker。
+# 靶点是私有方法，名字/签名跨版本可能变，因此 required=false + defaultRequire=0 做软失败；
+# 失败时只会让"第一人称刀的视角摇晃"这一项不生效（调用方会捕获并停用），其余功能不受影响。
+[[mixins]]
+    config="yessb.bob.mixins.json"
 
 [[mixins]]
     config="yessb.ysm.mixins.json"

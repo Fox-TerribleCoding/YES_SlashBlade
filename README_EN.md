@@ -44,7 +44,13 @@ it never crashes. Nothing happens at all without YSM
 
 ## 2. Installation
 
-Drop `YES_SB-1.0.12.jar` into `.minecraft/mods/`
+> 🔴 **Important (fixed in 1.0.14): versions 1.0.5 – 1.0.13 crash on any left-click swing in a
+> modpack WITHOUT Touhou Little Maid** (e.g. ATM10). The maid swing hook is attached to vanilla's
+> swing, and it referenced a Touhou Little Maid class — when that class is absent the game fails at
+> **class-loading** time, which `try/catch` cannot catch. **Update to the latest version** (fixed in 1.0.14); just swap the jar,
+> no config change needed.
+
+Drop `YES_SB-1.0.16.jar` into `.minecraft/mods/`
 (or `versions/<name>/mods/` when using version isolation).
 
 ## 3. Root causes (why the fix looks like this)
@@ -64,6 +70,14 @@ Drop `YES_SB-1.0.12.jar` into `.minecraft/mods/`
    between the two, yet the published 1.21.1 jar contains **no reference to `slashblade` at all**.
    Three things were lost: the maid's hand render branch, the back-slot render branch, and the
    `swing()` override that gives the maid a **slash arc and a drawn blade** when she attacks.
+   SlashBlade's "drawn" pose is only 5 ticks of constant-speed spin written as a **binary** switch
+   (full transform inside the window, gone the instant it ends), so it used to pop in and out.
+   Since 1.0.16 the mod eases **both ends** (default 1 tick = 50 ms) by slerping from the sheathed
+   pose to the drawn pose — **the middle of the window is bit-identical to upstream**, only the two
+   ends are rounded off. Option `maidBladeEaseTicks` (hot-reloaded, default `1.0`; `0` restores
+   upstream exactly). This is a deliberate **polish this mod adds**, and it only removes the pop:
+   the blade still performs upstream's constant-speed spin — a full sword-skill animation set for
+   the maid is out of scope.
 
 ## 4. How it is fixed
 
@@ -102,7 +116,7 @@ Drop `YES_SB-1.0.12.jar` into `.minecraft/mods/`
 ## 5. Configuration
 
 `config/yes_sb.properties` is generated on first launch.
-**Every key hot-reloads — save the file and it applies in about 2 seconds, no restart.**
+**Almost every key hot-reloads — save the file and it applies in about 2 seconds, no restart. The one exception is `firstPersonIrisHack` (see §6): it needs a game restart.**
 
 Most-used keys:
 
@@ -134,6 +148,30 @@ The full Chinese configuration reference — every key, one row each — is in
 
 ## 6. Known limitations
 
+- **First-person blade with shaders — the other half (fixed in 1.0.15).** With shaders on, the blade
+  used to be **locked horizontally** (turning the view left/right did not move it) while it **moved
+  vertically in the opposite direction** as you pitched. Cause: SlashBlade ships an "Iris
+  approximation" that applies two extra rotations to *approximate* cancelling the matrix Iris injects
+  into `ModelViewMat` — `rotY(yaw+180)` cancels the later `rotY(180−yaw)` exactly (a full 360°, so
+  **yaw is wiped out**), while `rotX(+xRot)` does **not** cancel the later `rotX(−clamp)` (an extra
+  pitch). Since 1.0.12 this mod handles `ModelViewMat` exactly, so that approximation became a plain
+  error. It is now disabled by **hiding "iris is loaded" from that one SlashBlade class in its
+  constructor** — the target is NeoForge's own `ModList`, so it is decoupled from the shape of that
+  branch, and **no Iris / shaderpack / third-party file is touched**. Option `firstPersonIrisHack`
+  (default `auto`); ⚠️ **this one needs a game restart** — see §5.
+- **View bobbing for the first-person blade is an enhancement, not a restoration (added in 1.0.13).**
+  Vanilla's first-person hand sways with your footsteps, but SlashBlade's first-person renderer clears
+  the pose stack — the sway lives *inside* the matrix it wipes, so the hand moved and the blade did not.
+  This mod now applies the same sway to the blade by **calling vanilla's own `GameRenderer#bobView`**
+  (via an `@Invoker` mixin) rather than re-implementing the maths, so it is **pixel-identical** to the
+  hand and follows Minecraft automatically if the algorithm changes. It is gated on the game's built-in
+  **View Bobbing** option, and sits right after the pose basis
+  (`ModelViewMat⁻¹ × camera rotation × sway`), so the whole blade sways rather than rotating about its own
+  origin, and the result is identical with and without shaders.
+  Option `firstPersonBladeBob` (default `true`, hot-reloaded).
+  **1.20.1 does not have this effect** (it clears the pose stack too) — set it to `false` if you want the
+  reference behaviour. The invoker lives in its own mixin class *and* its own mixin config
+  (`yessb.bob.mixins.json`, soft-fail), so if it ever stops matching, only this feature is lost.
 - **First-person blade with shaders (fixed in 1.0.12).** With *any* shader pack enabled,
   the first-person blade used to land in the wrong place and drift as you walked.
   The cause is the pose *basis*: a vertex ends up as `ModelViewMat × poseStack`, and without
@@ -174,7 +212,7 @@ The full Chinese configuration reference — every key, one row each — is in
 | YSM | `ysm-2.6.5-neoforge+mc1.21.1-release.jar` | 63,463,229 B | `B285C73D4EC010D9` |
 | SlashBlade: Resharped | `SlashBladeResharped-2.0.7-1.21.1.jar` | 3,886,797 B | `C67653EC0D7E08A7` |
 | Touhou Little Maid | `touhoulittlemaid-1.5.3-neoforge+mc1.21.1.jar` | 24,408,776 B | `F6DB04195820C850` |
-| This mod | `YES_SB-1.0.12.jar` | 143,301 B | `D5438A659FC05D6B` |
+| This mod | `YES_SB-1.0.16.jar` | 150,718 B | `194834F0A969D2B4` |
 
 > This mod's jar entries carry **build timestamps**, so its hash changes on every rebuild
 > even with identical sources — it identifies one specific build, not a constant.

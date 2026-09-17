@@ -78,7 +78,8 @@ public final class YesSlashBladeFix {
             LOGGER.info("[YES-SB] 未检测到 YSM：原版渲染本就正常，无需补偿。");
         } else {
             LOGGER.info("[YES-SB] 已就绪：YSM {}，拔刀剑 {}，车万女仆 {}。"
-                            + "第三人称腰刀补偿={}，剑技动画={}，主动画变体={}，女仆拔刀剑={}，女仆挥刀={}，靶向注入版本白名单={}",
+                            + "第三人称腰刀补偿={}，剑技动画={}，主动画变体={}，女仆拔刀剑={}，女仆挥刀={}，"
+                            + "第一人称基准={}，第一人称视角摇晃={}，靶向注入版本白名单={}",
                     YsmBridge.version(),
                     blade ? "已安装" : "未安装",
                     isTlmLoaded() ? "已安装" : "未安装",
@@ -87,6 +88,8 @@ public final class YesSlashBladeFix {
                     FixConfig.slashbladeMainStateAnimations ? "开" : "关",
                     FixConfig.maidSlashBlade ? "开" : "关",
                     FixConfig.maidSlashBladeAttack ? "开" : "关",
+                    FixConfig.firstPersonPoseBase,
+                    FixConfig.firstPersonBladeBob ? "开" : "关",
                     YsmBridge.isSupportedVersion() ? "命中" : "未命中（靶向注入已跳过）");
         }
     }

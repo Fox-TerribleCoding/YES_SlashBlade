@@ -43,7 +43,7 @@ $BuildDir   = Join-Path $ProjectRoot 'build'
 $ClassesDir = Join-Path $BuildDir 'classes'
 $SrcDir     = Join-Path $ProjectRoot 'src\main\java'
 $ResDir     = Join-Path $ProjectRoot 'src\main\resources'
-$JarName    = 'YES_SB-1.0.12.jar'
+$JarName    = 'YES_SB-1.0.16.jar'
 $OutJar     = Join-Path $BuildDir $JarName
 
 if ($Clean -and (Test-Path -LiteralPath $BuildDir)) {
@@ -218,6 +218,61 @@ if ($bomOffenders.Count -gt 0) {
     Write-Host "ERROR: these files start with a UTF-8 BOM and would break the jar:" -ForegroundColor Red
     $bomOffenders | ForEach-Object { Write-Host "  $_" -ForegroundColor Red }
     throw "UTF-8 BOM found (see the BOM guard comment in this script). Strip the BOM, then rebuild."
+}
+
+# ---------------------------------------------------------------- dependency-leak guard
+#
+# 1.0.13 shipped a crash and this guard exists because of it:
+#
+#   The maid swing hook is injected into vanilla LivingEntity#swing (so it runs for EVERY
+#   entity that swings, in every modpack), and the bridge class it called referenced
+#   com.github.tartaricacid...EntityMaid directly. In a modpack WITHOUT Touhou Little Maid
+#   (ATM10) resolving that type fails while the class is being linked - which happens
+#   BEFORE the method body runs, so the try/catch inside could not stop it:
+#   NoClassDefFoundError on every left click. Crash. Uncatchable at that spot.
+#
+# Rule this script now enforces:
+#   A class that can be loaded while an optional dependency is ABSENT must not reference
+#   that dependency's types at all. Detection of "is it installed" must go through
+#   ModList (see dev.yessb.compat.ModPresence), and "is this entity a maid" must compare
+#   class NAMES, never types.
+#
+# Anything below is the complete, reviewed allow-list: these classes may reference the
+# dependency, because they are only ever loaded once that dependency is present.
+$leakRules = @(
+    @{ Namespace = 'Lmods/flammpfeil'; Label = 'SlashBlade: Resharped'; Allowed = @(
+        'dev\yessb\compat\SlashBladeBridge.class',
+        'dev\yessb\mixin\sb\MixinSlashBladeTEISR.class',
+        'dev\yessb\mixin\sb\MixinBladeFirstPersonRender.class',
+        'dev\yessb\mixin\sb\MixinBladeFirstPersonRenderIrisFlag.class') },
+    @{ Namespace = 'Lcom/github/tartaricacid'; Label = 'Touhou Little Maid'; Allowed = @(
+        'dev\yessb\compat\TlmMaidBridge.class',
+        'dev\yessb\mixin\tlm\MixinTlmMaidHeldLayer.class') },
+    @{ Namespace = 'Lcom/elfmcys'; Label = 'Yes Steve Model'; Allowed = @(
+        'dev\yessb\compat\YsmSlashBladeModule.class',
+        'dev\yessb\mixin\ysm\MixinYsmSlashBladeModule.class') }
+)
+
+$leaks = @()
+$latin1 = [System.Text.Encoding]::GetEncoding(28591)
+foreach ($rule in $leakRules) {
+    Get-ChildItem -Path $ClassesDir -Recurse -Filter '*.class' -File | ForEach-Object {
+        $rel = $_.FullName.Substring($ClassesDir.Length + 1)
+        if ($rule.Allowed -contains $rel) { return }
+        $text = $latin1.GetString([System.IO.File]::ReadAllBytes($_.FullName))
+        if ($text.Contains($rule.Namespace)) {
+            $leaks += ("  {0}  ->  references {1}" -f $rel, $rule.Label)
+        }
+    }
+}
+if ($leaks.Count -gt 0) {
+    Write-Host "ERROR: these classes reference an OPTIONAL dependency's types but are not allow-listed:" -ForegroundColor Red
+    $leaks | ForEach-Object { Write-Host $_ -ForegroundColor Red }
+    Write-Host "If the dependency is absent, loading such a class throws NoClassDefFoundError" -ForegroundColor Red
+    Write-Host "(uncatchable: it happens during linking, before the method body)." -ForegroundColor Red
+    Write-Host "Fix: detect presence via ModPresence (ModList), compare class NAMES instead of types," -ForegroundColor Red
+    Write-Host "or move the type reference into an allow-listed bridge class." -ForegroundColor Red
+    throw "optional-dependency type leak (see the dependency-leak guard comment in this script)."
 }
 
 # ---------------------------------------------------------------- resources

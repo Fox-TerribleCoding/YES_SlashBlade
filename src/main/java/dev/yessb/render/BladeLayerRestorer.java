@@ -3,6 +3,7 @@ package dev.yessb.render;
 import com.mojang.blaze3d.vertex.PoseStack;
 import dev.yessb.FixConfig;
 import dev.yessb.YesSlashBladeFix;
+import dev.yessb.compat.ModPresence;
 import dev.yessb.compat.SlashBladeBridge;
 import dev.yessb.compat.YsmBridge;
 import net.minecraft.client.Minecraft;
@@ -38,6 +39,11 @@ public final class BladeLayerRestorer {
         if (!FixConfig.debugLog || !(entity instanceof LivingEntity living)) {
             return;
         }
+        // 只查 ModList，别去碰 SlashBladeBridge —— 它内部有拔刀剑的类型引用，
+        // 拔刀剑缺席时加载它会抛 NoClassDefFoundError（与 1.0.13 那次崩溃同类）。
+        if (!ModPresence.hasSlashBlade()) {
+            return;
+        }
         long now = System.currentTimeMillis();
         if (now - lastNote < 5000L) {
             return;
@@ -53,6 +59,12 @@ public final class BladeLayerRestorer {
     public static void restore(Entity entity, double x, double y, double z, float partialTicks,
                                PoseStack poseStack, MultiBufferSource buffer, int packedLight) {
         if (disabled || !FixConfig.enabled || !FixConfig.restoreThirdPerson) {
+            return;
+        }
+        // 拔刀剑没装就没什么可补的 —— 而这一条必须在这里先拦住：
+        // 下面的 handPathHandles / holdsBlade / renderWaistBlade 都在 SlashBladeBridge 里，
+        // 那是个引用了拔刀剑类型的类，缺席时加载它会直接崩（见 ModPresence 类注释）。
+        if (!ModPresence.hasSlashBlade()) {
             return;
         }
         // 判据只有一条：这一帧原版渲染器没跑（由调用方传入）。没装 YSM 时原版必然跑，本方法不会被走到。
@@ -116,10 +128,14 @@ public final class BladeLayerRestorer {
     public static boolean handPathHandles(LivingEntity living) {
         // 女仆的刀由 TLM 的渲染层负责（见 TlmMaidBridge）——那边不归这两条路管，
         // 这里必须让开，否则腰挂层会和它各画一把。
-        if (FixConfig.maidSlashBlade && isTlmMaid(living)) {
+        if (FixConfig.maidSlashBlade && ModPresence.isMaid(living)) {
             return true;
         }
         if (!FixConfig.handBladeInThirdPerson || !YsmBridge.isLoaded()) {
+            return false;
+        }
+        // 同样先查 ModList：下面那句在 SlashBladeBridge 里，拔刀剑缺席时不能碰它。
+        if (!ModPresence.hasSlashBlade()) {
             return false;
         }
         if (!SlashBladeBridge.isBlade(living.getMainHandItem())) {
@@ -129,22 +145,6 @@ public final class BladeLayerRestorer {
         // 默认规则：只有"本来就没有腰挂层"的实体才交给手持补画。
         // 玩家一定带腰挂层 —— 之前强行让手持那条路接手，结果第一人称纸娃娃同时出现了两把刀。
         return !FixConfig.handBladeRequiresNoWaistLayer || !hasWaistLayer(living);
-    }
-
-    /**
-     * 是不是车万女仆。
-     *
-     * <p>刻意用类名字符串判断而不是引用 TLM 的类型：本类在没有 TLM 的环境里也会被加载，
-     * 硬引用会让整个渲染补偿一起崩。TLM 的女仆实体就是
-     * {@code com.github.tartaricacid.touhoulittlemaid.entity.passive.EntityMaid}。
-     */
-    private static boolean isTlmMaid(LivingEntity living) {
-        for (Class<?> c = living.getClass(); c != null; c = c.getSuperclass()) {
-            if ("com.github.tartaricacid.touhoulittlemaid.entity.passive.EntityMaid".equals(c.getName())) {
-                return true;
-            }
-        }
-        return false;
     }
 
     /**
